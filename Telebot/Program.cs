@@ -24,21 +24,30 @@ namespace Telebot
         static void Main(string[] args)
         {
             InitBinanceClient();
-            RunBackTest("BTCUSDT");
-            RunBackTest("ALGOUSDT");
-            RunBackTest("LDOUSDT");
-            RunBackTest("UNFIUSDT");
+
+            //var symbols = binanceClientService.GetFuturesPairs().Where(m => m.Value < DateTime.UtcNow.AddDays(-5));
+
+            //foreach (var symbol in symbols.Select(m => m.Key))
+            //{
+            //    RunBackTest(symbol);
+            //}
+
+            //RunBackTest("BTCUSDT");
+            //RunBackTest("ALGOUSDT");
+            //RunBackTest("LDOUSDT");
+            //RunBackTest("UNFIUSDT");
 
             Console.ReadLine();
 
             RunTelegramBot();
-            RunTradingConfigurationWatcher();
+
+            // todo add timer job to close orphant TP / SL orders once a minute
         }
 
         private static void InitBinanceClient()
         {
             binanceClientService = new BinanceClientService("gvNqiHE4DJKhSREACPghpwSb9zrXaObCIriMJAZN1J0ptfLY8cLexZpqkXJGqD0s", "S1mMv1ZXUOWyWz6eEJCtZe23Pxvyx7As51EfVniJtmKXGQTClD7jxnHvs0W6XXnK", tradingConfig, tradingState);
-            //binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
+            binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
         }
 
         private static void RunBackTest(string symbol)
@@ -67,8 +76,8 @@ namespace Telebot
                 if (taProcessed.Count > 20)
                 {
                     var ma20 = taLibManager.Ma(taProcessed.Select(m => Convert.ToDouble(m.Kline.ClosePrice)), TALib.Core.MAType.Sma, 20);
-                    kline.MASpike = new ChangeModel { Value = (kline.Kline.HighPrice - Convert.ToDecimal(ma20.Current)) / Convert.ToDecimal(ma20.Current) };
-                    kline.MADrop = new ChangeModel { Value = (Convert.ToDecimal(ma20.Current) - kline.Kline.LowPrice) / kline.Kline.LowPrice };
+                    kline.MASpike = new ChangeModel { Value = (kline.Kline.HighPrice - Convert.ToDecimal(ma20.Current)) / Convert.ToDecimal(ma20.Current), IsPositive = true };
+                    kline.MADrop = new ChangeModel { Value = (Convert.ToDecimal(ma20.Current) - kline.Kline.LowPrice) / kline.Kline.LowPrice, IsPositive = false };
                 }
 
                 taProcessed.Add(kline);
@@ -82,17 +91,27 @@ namespace Telebot
 
             foreach (var kline in orderedByMaPerformance.Take((int)(marketData.Count * 0.01)))
             {
-                var subsequentKLines = marketData.SkipWhile(m => kline.Kline.OpenTime != m.Kline.OpenTime).ToList();
+                var subsequentKLines = marketData.SkipWhile(m => kline.Kline.OpenTime != m.Kline.OpenTime).Skip(1).ToList();
 
-                int daysTillProfit = 0;
+                int candlesTillProfit = 0;
+                int candlesTillStopLoss = 0;
 
                 foreach (var marketKline in subsequentKLines)
                 {
-                    if (kline.MASpike.IsPositive)
+                    candlesTillProfit++;
+                    candlesTillStopLoss++;
+
+                    if (kline.MAChange.IsPositive)
                     {
                         if (marketKline.Kline.LowPrice < (kline.Kline.HighPrice - (kline.Kline.HighPrice * 0.01m)))
                         {
-                            kline.DaysTillProfit = daysTillProfit;
+                            kline.CandlesTillProfit = candlesTillProfit;
+                            break;
+                        }
+
+                        if (marketKline.Kline.HighPrice > (kline.Kline.HighPrice + (kline.Kline.HighPrice * 0.03m)))
+                        {
+                            kline.CandlesTillStopLoss = candlesTillStopLoss;
                             break;
                         }
                     }
@@ -100,31 +119,21 @@ namespace Telebot
                     {
                         if (marketKline.Kline.HighPrice > (kline.Kline.LowPrice + (kline.Kline.LowPrice * 0.01m)))
                         {
-                            kline.DaysTillProfit = daysTillProfit;
+                            kline.CandlesTillProfit = candlesTillProfit;
+                            break;
+                        }
+
+                        if (marketKline.Kline.LowPrice < (kline.Kline.LowPrice - (kline.Kline.LowPrice * 0.03m)))
+                        {
+                            kline.CandlesTillStopLoss = candlesTillProfit;
                             break;
                         }
                     }
                 }
-
-
             }
 
-        }
-
-        private static void RunTradingConfigurationWatcher()
-        {
-            UpdateTradingConfiguration(null, null);
-                
-            var tradingConfigUpdateTimer = new System.Timers.Timer(60 * 1000);
-            tradingConfigUpdateTimer.Elapsed += UpdateTradingConfiguration;
-            tradingConfigUpdateTimer.AutoReset = true;
-            tradingConfigUpdateTimer.Enabled = true;
-        }
-
-        private static void UpdateTradingConfiguration(object? sender, ElapsedEventArgs e)
-        {
-            tradingConfig.AccountSize = binanceClientService.GetFuturesAccountMargin();
-            tradingConfig.BinanceExchangeInfo = binanceClientService.GetExchangeInfo();
+            var profitability = (double)orderedByMaPerformance.Take((int)(marketData.Count * 0.01)).Where(m => m.CandlesTillStopLoss == null).Count() / (double)orderedByMaPerformance.Take((int)(marketData.Count * 0.01)).Count();
+            Console.WriteLine($"{symbol}: {profitability.ToString("P2")} profitability, average in  {orderedByMaPerformance.Take((int)(marketData.Count * 0.01)).Where(m => m.CandlesTillProfit.HasValue).Average(m => m.CandlesTillProfit.Value)} candles");
         }
 
         private static void RunTelegramBot()
@@ -136,13 +145,28 @@ namespace Telebot
 
         private static void HandleSymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
         {
+            if (data.Data.Symbol == "ETHUSDT")
+#if true
+
+#endif
+            {
+                var closePrice = data.Data.Data.ClosePrice;
+                binanceClientService.PlaceOrder(data.Data.Symbol, closePrice, OrderSide.Sell);
+
+                return;
+            }
+            else
+            {
+                return;
+            }
+
             if (!tradingState.State.ContainsKey(data.Data.Symbol))
             {
                 tradingState.State[data.Data.Symbol] = new SymbolTradeState();
 
                 if (tradingState.CanTrade())
                 {
-                    binanceClientService.OpenLimitOrderShort(data.Data.Symbol, data.Data.Data.ClosePrice);
+                    //binanceClientService.PlaceOrder(data.Data.Symbol, data.Data.Data.ClosePrice);
                 }
             }
             else
@@ -155,22 +179,10 @@ namespace Telebot
                 }
             }
 
-            
+
 
         }
-
-            //private static void Bot_AskForCardHandler(long clientId)
-            //{
-            //    string replyMsg = $"We've received a request for card from the client: {clientId}";
-            //    bot.ReplyTo(clientId, replyMsg);
-            //}
-
-            //private static void Bot_SendFeedbackHandler(long clientId, string? msg)
-            //{
-            //    string replyMsg = $"We've received a feedback {msg} from the client: {clientId}";
-            //    bot.ReplyTo(clientId, replyMsg);
-            //}
-        }
+    }
 }
 
 

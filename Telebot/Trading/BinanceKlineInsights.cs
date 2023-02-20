@@ -19,13 +19,36 @@ namespace Telebot.Trading
 
         public decimal Spike => (Kline.HighPrice - Kline.OpenPrice) / Kline.OpenPrice;
 
-        public ChangeModel? MASpike { get; set; }
+        public ChangeModel MASpike { get; set; }
 
-        public ChangeModel? MADrop { get; set; }
+        public ChangeModel MADrop { get; set; }
 
-        public ChangeModel? MAChange => MASpike.Value > MADrop.Value ? MASpike : MADrop;
+        public ChangeModel MAChange
+        {
+            get
+            {
+                if (MASpike == null)
+                {
+                    if (MADrop == null)
+                        return null;
+                    else
+                        return MADrop;
+                }
 
-        public int DaysTillProfit { get; internal set; }
+                if (MADrop == null)
+                {
+                    if (MASpike != null)
+                    {
+                        return MASpike;
+                    }
+                }
+                
+                return MASpike.Value > MADrop.Value ? MASpike : MADrop;
+            }
+        }
+
+        public int? CandlesTillProfit { get; set; }
+        public int? CandlesTillStopLoss { get; set; }
     }
 
     internal class ChangeModel
@@ -34,6 +57,6 @@ namespace Telebot.Trading
 
         public decimal Abs => Math.Abs(Value);
 
-        public bool IsPositive => Value > 0;
+        public bool IsPositive { get; set; }
     }
 }

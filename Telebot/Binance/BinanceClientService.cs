@@ -61,56 +61,48 @@ namespace Telebot.Binance
             }
         }
 
-        internal BinanceFuturesUsdtExchangeInfo GetExchangeInfo()
-        {
-            using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
-            {
-                try
-                {
-                    var exchangeInfo = client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync().GetAwaiter().GetResult();
-                    return exchangeInfo.Data;
-                }
-                catch
-                {
-                    throw;
-                }
-            }
-        }
-
-        internal decimal GetFuturesAccountMargin()
+        internal void PlaceOrder(string symbol, decimal price, OrderSide side)
         {
             using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
             {
                 try
                 {
                     var accountInfo = client.UsdFuturesApi.Account.GetAccountInfoAsync().GetAwaiter().GetResult();
-                    return accountInfo.Data.TotalMarginBalance;
-                }
-                catch
-                {
-                    throw;
-                }
-            }
-        }
 
-        internal void OpenLimitOrderShort(string symbol, decimal currentPrice)
-        {
-            using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
-            {
-                try
-                {
-                    var tradeSymbolInfo = this.tradingConfig.BinanceExchangeInfo.Symbols.FirstOrDefault(m => m.BaseAsset.ToUpper() == symbol.ToAsset().ToUpper());
-                    var quantity = Math.Round((this.tradingConfig.AssetTradedSideUsdt * this.tradingConfig.Leverage / currentPrice), tradeSymbolInfo.QuantityPrecision);
-                    var price = currentPrice + (currentPrice * (this.tradingConfig.TargetProfitPercentage / this.tradingConfig.Leverage));
+                    if (accountInfo.Data.Positions.Count(m => m.UnrealizedPnl != 0) >= this.tradingConfig.SymbolsInTrade) return;
 
-                    var orderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, OrderSide.Sell, FuturesOrderType.Limit, quantity, price, PositionSide.Both, TimeInForce.GoodTillCanceled).GetAwaiter().GetResult();
-                    
+                    var tradeSymbolInfo = client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync().GetAwaiter().GetResult().Data.Symbols.FirstOrDefault(m => m.BaseAsset.ToUpper() == symbol.ToAsset().ToUpper());
+
+                    var quantity = Math.Round(((((accountInfo.Data.TotalMarginBalance / this.tradingConfig.Leverage) * this.tradingConfig.TradedPercentage) / this.tradingConfig.SymbolsInTrade) * this.tradingConfig.Leverage / price), tradeSymbolInfo.QuantityPrecision);
+
+                    client.UsdFuturesApi.Account.ChangeInitialLeverageAsync(symbol, this.tradingConfig.Leverage).GetAwaiter().GetResult();
+              
+                    var orderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side, FuturesOrderType.Market, quantity).GetAwaiter().GetResult();
+
                     if (orderResponse.Success)
                     {
+                        var takeProfitOrderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(
+                            symbol,
+                            side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell,
+                            FuturesOrderType.TakeProfitMarket,
+                            quantity,
+                            timeInForce: TimeInForce.GoodTillCanceled,
+                            stopPrice: Math.Round(side == OrderSide.Sell ? price - (price * 0.01m) : price + (price * 0.01m), tradeSymbolInfo.PricePrecision),
+                            closePosition: true
+                            ).GetAwaiter().GetResult();
+
+                        var stopLossOrderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(
+                            symbol,
+                            side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell,
+                            FuturesOrderType.StopMarket,
+                            quantity,
+                            timeInForce: TimeInForce.GoodTillCanceled,
+                            stopPrice: Math.Round(side == OrderSide.Sell ? price + (price * 0.03m) : price - (price * 0.03m), tradeSymbolInfo.PricePrecision),
+                            closePosition: true
+                            ).GetAwaiter().GetResult();
+
                         this.tradingState.State[symbol].LimitOrder = orderResponse.Data;
                     }
-
-
                 }
                 catch (Exception ex)
                 {
@@ -124,6 +116,15 @@ namespace Telebot.Binance
             {
                 WebCallResult<IEnumerable<IBinanceKline>> webCallResult = client.UsdFuturesApi.ExchangeData.GetKlinesAsync(symbol, interval, start, end).GetAwaiter().GetResult();
                 return webCallResult;
+            }
+        }
+
+        public Dictionary<string, DateTime> GetFuturesPairs()
+        {
+            using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
+            {
+                var exchangeInfo = client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync().GetAwaiter().GetResult();
+                return exchangeInfo.Data.Symbols.Where(m => m.Pair.EndsWith("USDT") && m.ContractType == ContractType.Perpetual && m.Status == SymbolStatus.Trading).ToDictionary(k => k.Pair, v => v.ListingDate);
             }
         }
     }
