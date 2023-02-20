@@ -25,12 +25,12 @@ namespace Telebot
         {
             InitBinanceClient();
 
-            //var symbols = binanceClientService.GetFuturesPairs().Where(m => m.Value < DateTime.UtcNow.AddDays(-5));
+            var symbols = binanceClientService.GetFuturesPairs().Where(m => m.Value < DateTime.UtcNow.AddDays(-5));
 
-            //foreach (var symbol in symbols.Select(m => m.Key))
-            //{
-            //    RunBackTest(symbol);
-            //}
+            foreach (var symbol in symbols.Select(m => m.Key))
+            {
+                RunBackTest(symbol);
+            }
 
             //RunBackTest("BTCUSDT");
             //RunBackTest("ALGOUSDT");
@@ -47,14 +47,14 @@ namespace Telebot
         private static void InitBinanceClient()
         {
             binanceClientService = new BinanceClientService("gvNqiHE4DJKhSREACPghpwSb9zrXaObCIriMJAZN1J0ptfLY8cLexZpqkXJGqD0s", "S1mMv1ZXUOWyWz6eEJCtZe23Pxvyx7As51EfVniJtmKXGQTClD7jxnHvs0W6XXnK", tradingConfig, tradingState);
-            binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
+         //   binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
         }
 
         private static void RunBackTest(string symbol)
         {
             var marketData = new List<BinanceKlineInsights>();
 
-            int i = 10;
+            int i = 40;
 
             while (i > 0)
             {
@@ -146,9 +146,6 @@ namespace Telebot
         private static void HandleSymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
         {
             if (data.Data.Symbol == "ETHUSDT")
-#if true
-
-#endif
             {
                 var closePrice = data.Data.Data.ClosePrice;
                 binanceClientService.PlaceOrder(data.Data.Symbol, closePrice, OrderSide.Sell);
