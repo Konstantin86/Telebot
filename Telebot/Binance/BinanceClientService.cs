@@ -101,7 +101,7 @@ namespace Telebot.Binance
                             closePosition: true
                             ).GetAwaiter().GetResult();
 
-                        this.tradingState.State[symbol].LimitOrder = orderResponse.Data;
+                        //this.tradingState.State[symbol].LimitOrder = orderResponse.Data;
                     }
                 }
                 catch (Exception ex)
