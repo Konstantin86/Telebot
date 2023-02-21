@@ -70,7 +70,7 @@ namespace Telebot
 
             int count = 1;
 
-            foreach (var symbol in symbols.Where(m => m.Value < DateTime.UtcNow.AddDays(-5)).Select(m => m.Key))
+            foreach (var symbol in symbols.Where(m => m.Value < DateTime.UtcNow.AddDays(-10)).Select(m => m.Key))
             {
                 Console.WriteLine($"{symbol}: Loading data ({count++} / {symbols.Count()})...");
 

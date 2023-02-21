@@ -30,6 +30,11 @@ namespace Telebot.Trading
 
         internal bool SpikeDetected(ChangeModel maChange, double topMovesPercent)
         {
+            if (KlineInsights.Count * topMovesPercent < 1)
+            {
+                return false;
+            }
+
             return maChange.Abs >= KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Last().MAChange.Abs;
         }
     }
