@@ -87,7 +87,18 @@ namespace Telebot
             File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
         }
 
-        private static void RunTelegramBot() => telebot = new Telegram.Telebot("6175182837:AAHPvR7-X9ldM7KGVN6l88z-G3k7wrFrhNs");
+        private static void RunTelegramBot() 
+        { 
+            telebot = new Telegram.Telebot("6175182837:AAHPvR7-X9ldM7KGVN6l88z-G3k7wrFrhNs");
+            telebot.SaveHandler += Telebot_SaveHandler;
+        }
+
+        private static void Telebot_SaveHandler(long chatId)
+        {
+            File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
+            telebot.SendUpdate("State was successfully saved", chatId);
+        }
+
         private static void RunTradingBot() => binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
         private static void InitBinanceClient() => binanceClientService = new BinanceClientService("gvNqiHE4DJKhSREACPghpwSb9zrXaObCIriMJAZN1J0ptfLY8cLexZpqkXJGqD0s", "S1mMv1ZXUOWyWz6eEJCtZe23Pxvyx7As51EfVniJtmKXGQTClD7jxnHvs0W6XXnK", tradingConfig, tradingState);
 
