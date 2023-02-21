@@ -25,9 +25,12 @@ namespace Telebot.Trading
         public double ClosePrice { get; set; }
         public double LowPrice { get; set; }
         public double HighPrice { get; set; }
-        public ChangeModel MAChange { get; set; }
+        [JsonIgnore]
         public int? CandlesTillProfit { get; set; }
+        [JsonIgnore]
         public int? CandlesTillStopLoss { get; set; }
+        public double MA20 { get; set; }
+        public ChangeModel MAChange { get; set; }
     }
 
     internal class ChangeModel

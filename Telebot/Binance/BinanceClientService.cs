@@ -2,18 +2,10 @@
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using Binance.Net.Objects;
-using Binance.Net.Objects.Models.Futures;
-using CryptoExchange.Net.Authentication;
 using CryptoExchange.Net.Objects;
 using CryptoExchange.Net.Sockets;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using Telebot.Trading;
 using Telebot.Utilities;
-using Telegram.Bot.Types.Payments;
 
 namespace Telebot.Binance
 {
@@ -61,7 +53,7 @@ namespace Telebot.Binance
             }
         }
 
-        internal void PlaceOrder(string symbol, decimal price, OrderSide side)
+        internal string PlaceOrder(string symbol, decimal price, OrderSide side)
         {
             using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
             {
@@ -69,25 +61,31 @@ namespace Telebot.Binance
                 {
                     var accountInfo = client.UsdFuturesApi.Account.GetAccountInfoAsync().GetAwaiter().GetResult();
 
-                    if (accountInfo.Data.Positions.Count(m => m.UnrealizedPnl != 0) >= this.tradingConfig.SymbolsInTrade) return;
+                    bool maxTradesAreOpen = accountInfo.Data.Positions.Count(m => m.UnrealizedPnl != 0) >= this.tradingConfig.SymbolsInTrade;
+                    bool symbolPositionIsOpen = (accountInfo.Data.Positions.FirstOrDefault(m => m.Symbol == symbol && m.UnrealizedPnl != 0) != null);
+                    bool symbolPositionWasOpenWithinRecent24h = ((DateTime.Now - tradingState.State[symbol].LastOrderDate).TotalHours < 24);
+
+                    if (maxTradesAreOpen || symbolPositionIsOpen || symbolPositionWasOpenWithinRecent24h) return null;
 
                     var tradeSymbolInfo = client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync().GetAwaiter().GetResult().Data.Symbols.FirstOrDefault(m => m.BaseAsset.ToUpper() == symbol.ToAsset().ToUpper());
 
                     var quantity = Math.Round(((((accountInfo.Data.TotalMarginBalance / this.tradingConfig.Leverage) * this.tradingConfig.TradedPercentage) / this.tradingConfig.SymbolsInTrade) * this.tradingConfig.Leverage / price), tradeSymbolInfo.QuantityPrecision);
 
                     client.UsdFuturesApi.Account.ChangeInitialLeverageAsync(symbol, this.tradingConfig.Leverage).GetAwaiter().GetResult();
-              
+
                     var orderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side, FuturesOrderType.Market, quantity).GetAwaiter().GetResult();
 
                     if (orderResponse.Success)
                     {
+                        tradingState.State[symbol].LastOrderDate = DateTime.Now;
+
                         var takeProfitOrderResponse = client.UsdFuturesApi.Trading.PlaceOrderAsync(
                             symbol,
                             side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell,
                             FuturesOrderType.TakeProfitMarket,
                             quantity,
                             timeInForce: TimeInForce.GoodTillCanceled,
-                            stopPrice: Math.Round(side == OrderSide.Sell ? price - (price * 0.01m) : price + (price * 0.01m), tradeSymbolInfo.PricePrecision),
+                            stopPrice: Math.Round(side == OrderSide.Sell ? price - (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)) : price + (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)), tradeSymbolInfo.PricePrecision),
                             closePosition: true
                             ).GetAwaiter().GetResult();
 
@@ -97,16 +95,27 @@ namespace Telebot.Binance
                             FuturesOrderType.StopMarket,
                             quantity,
                             timeInForce: TimeInForce.GoodTillCanceled,
-                            stopPrice: Math.Round(side == OrderSide.Sell ? price + (price * 0.03m) : price - (price * 0.03m), tradeSymbolInfo.PricePrecision),
+                            stopPrice: Math.Round(side == OrderSide.Sell ? price + (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)) : price - (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)), tradeSymbolInfo.PricePrecision),
                             closePosition: true
-                            ).GetAwaiter().GetResult();
+                        ).GetAwaiter().GetResult();
 
-                        //this.tradingState.State[symbol].LimitOrder = orderResponse.Data;
+                        string tpMessage = takeProfitOrderResponse.Success ? "TP is automatically set to fix 1% of profit"
+                            : $"TP wasn't set due to error{(takeProfitOrderResponse.Error != null ? $":{takeProfitOrderResponse.Error.Code}:{takeProfitOrderResponse.Error.Message}" : "")}";
+
+                        string slMessage = stopLossOrderResponse.Success ? "SL is automatically set to fix 3% of loose"
+                            : $"SL wasn't set due to error{(stopLossOrderResponse.Error != null ? $":{stopLossOrderResponse.Error.Code}:{stopLossOrderResponse.Error.Message}" : "")}";
+
+                        return $"{symbol}: Opening {(side == OrderSide.Sell ? "Short" : "Long")} position at {price.ToString("C5")} " +
+                                $"due to a huge deviation from MA20 being detected. " +
+                                $"In most of the cases price will roll back at least 1%. {tpMessage}. {slMessage}." +
+                                $"Please track the orders in your Binance application.";
+                    }
+                    else
+                    {
+                        return $"Error when opening {symbol} order: {(orderResponse.Error != null ? orderResponse.Error.Code + orderResponse.Error.Message : string.Empty)}";
                     }
                 }
-                catch (Exception ex)
-                {
-                }
+                catch (Exception ex) { return $"Exception when trying to opne {symbol} order: {ex}"; }
             }
         }
 

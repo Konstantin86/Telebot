@@ -9,14 +9,18 @@ namespace Telebot.Telegram
     internal class Telebot
     {
         private TelegramBotClient bot;
+        private ITelebotUsersStore usersStore;
 
+        public event Action<long> StartHandler;
+        public event Action<long> StopHandler;
         public event Action<long, string?> SendFeedbackHandler;
         public event Action<long> AskForCardHandler;
 
         public Telebot(string botAccessToken)
-
         {
             this.bot = new TelegramBotClient(botAccessToken);
+            this.usersStore = new TelebotUsersStore();
+
             var cts = new CancellationTokenSource();
 
             var receiverOptions = new ReceiverOptions() { AllowedUpdates = { } };
@@ -68,6 +72,11 @@ namespace Telebot.Telegram
             }
         }
 
+        public void SendUpdate(string message)
+        {
+            this.usersStore.GetAllUsers().ForEach(async m => await this.bot.SendTextMessageAsync(m, message));
+        }
+
         private async Task BotOnMessageReceived(Message message, string callbackQueryId = null)
         {
             Console.WriteLine($"Receive message type: {message.Type}");
@@ -82,11 +91,35 @@ namespace Telebot.Telegram
 
             var action = (command) switch
             {
+                "/start" => Start(message.Chat.Id),
+                "/stop" => Stop(message.Chat.Id),
                 "/feedback" => SendFeedback(message.Chat.Id, parameter),
                 "/askForCard" => AskForCard(message.Chat.Id),
                 _ => Usage(message)
             };
             await action;
+
+            async Task Start(long clientId)
+            {
+                this.usersStore.StoreUser(message.Chat.Id);
+
+                await this.bot.SendTextMessageAsync(message.Chat.Id, "Welcome to telebot. It's created for informational purposes only");
+
+                if (StartHandler != null)
+                {
+                    StartHandler(clientId);
+                }
+            };
+
+            async Task Stop(long clientId)
+            {
+                this.usersStore.RemoveUser(message.Chat.Id);
+
+                if (StopHandler != null)
+                {
+                    StopHandler(clientId);
+                }
+            };
 
             async Task SendFeedback(long clientId, string messageText)
             {
