@@ -10,11 +10,19 @@ namespace Telebot.Trading
         public IEnumerable<BinanceKlineInsights> KlineInsightsOrderedByPerformance => KlineInsights.Where(m => m.MAChange != null).OrderByDescending(m => m.MAChange.Abs);
 
         public DateTime LastOrderDate { get; set; } = DateTime.MinValue;
+        public DateTime LastInformDate { get; set; } = DateTime.MinValue;
 
         public double GetProfitability(double topMovesPercent)
         {
             return (double)KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Where(m => m.CandlesTillStopLoss == null && m.CandlesTillProfit != null).Count() 
                 / KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Count();
+        }
+
+        public List<BinanceKlineInsights> GetStopLossCases(double topMovesPercent)
+        {
+            return KlineInsightsOrderedByPerformance
+                .Take((int)(KlineInsights.Count * topMovesPercent))
+                .Where(m => m.CandlesTillStopLoss != null).ToList();
         }
 
         public double GetProfitAverageTimeInCandles(double topMovesPercent)
@@ -28,7 +36,18 @@ namespace Telebot.Trading
                 : 1;
         }
 
-        internal bool SpikeDetected(ChangeModel maChange, double topMovesPercent)
+        internal bool EnterSpikeDetected(ChangeModel maChange, double topMovesPercent)
+        {
+            if (KlineInsights.Count * topMovesPercent < 1)
+            {
+                return false;
+            }
+
+            return maChange.Abs >= KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Average(m => m.MAChange.Abs);
+        }
+
+
+        internal bool InformSpikeDetected(ChangeModel maChange, double topMovesPercent)
         {
             if (KlineInsights.Count * topMovesPercent < 1)
             {

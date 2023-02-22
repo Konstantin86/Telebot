@@ -11,11 +11,11 @@ namespace Telebot.Telegram
         private TelegramBotClient bot;
         private ITelebotUsersStore usersStore;
 
-        public event Action<long> StartHandler;
-        public event Action<long> StopHandler;
-        public event Action<long> SaveHandler;
-        public event Action<long, string?> SendFeedbackHandler;
-        public event Action<long> AskForCardHandler;
+        public event Action<long>? StartHandler;
+        public event Action<long>? StopHandler;
+        public event Action<long>? SaveHandler;
+        public event Action<long, string?>? SendFeedbackHandler;
+        public event Action<long>? AskForCardHandler;
 
         public Telebot(string botAccessToken)
         {
@@ -77,23 +77,23 @@ namespace Telebot.Telegram
         {
             if (chatId.HasValue)
             {
-                this.bot.SendTextMessageAsync(chatId.Value, message);
+                this.bot.SendTextMessageAsync(chatId.Value, message, ParseMode.Html, disableWebPagePreview: true);
             }
             else
             {
-                this.usersStore.GetAllUsers().ForEach(async m => await this.bot.SendTextMessageAsync(m, message));
+                this.usersStore.GetAllUsers().ForEach(async m => await this.bot.SendTextMessageAsync(m, message, ParseMode.Html, disableWebPagePreview: true));
             }
         }
 
-        private async Task BotOnMessageReceived(Message message, string callbackQueryId = null)
+        private async Task BotOnMessageReceived(Message message)
         {
             Console.WriteLine($"Receive message type: {message.Type}");
-            if (message.Type != MessageType.Text)
+            if (message.Type != MessageType.Text || message.Text == null)
                 return;
 
-            string[] commandParts = message.Text.Split(' ');
-            string command = commandParts.First();
-            string parameter = commandParts.Last();
+            string[]? commandParts = message.Text.Split(' ');
+            string? command = commandParts.First();
+            string? parameter = commandParts.Last();
 
             var fromServer = parameter == "fromServer";
 
@@ -112,7 +112,7 @@ namespace Telebot.Telegram
             {
                 this.usersStore.StoreUser(message.Chat.Id);
 
-                await this.bot.SendTextMessageAsync(message.Chat.Id, "Welcome to telebot. It's created for informational purposes only");
+                await this.bot.SendTextMessageAsync(message.Chat.Id, "Welcome to telebot. Bot application is up and running. You're subscribed on updates.");
 
                 if (StartHandler != null)
                 {
@@ -156,7 +156,7 @@ namespace Telebot.Telegram
 
             async Task Usage(Message message)
             {
-                const string usage = "Usage:\n" +
+                const string? usage = "Usage:\n" +
                                         "/feedback <message> - send feedback\n" +
                                         "/askForCard - request for Kharkiv card creation\n";
 

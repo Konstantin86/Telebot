@@ -17,5 +17,10 @@ namespace Telebot.Utilities
         {
             return asset.ToUpper() + "USDT";
         }
+
+        public static string ToBinanceSymbolChartLink(this string symbol)
+        {
+            return $"https://www.binance.com/en/futures/{symbol}";
+        }
     }
 }
