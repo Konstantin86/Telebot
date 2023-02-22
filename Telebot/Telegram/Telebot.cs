@@ -3,6 +3,7 @@ using Telegram.Bot.Exceptions;
 using Telegram.Bot.Polling;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types;
+using System.Diagnostics;
 
 namespace Telebot.Telegram
 {
@@ -14,9 +15,9 @@ namespace Telebot.Telegram
         public event Action<long>? StartHandler;
         public event Action<long>? StopHandler;
         public event Action<long>? SaveHandler;
-        public event Action<long>? TopMovesHandler;
+        public event Action<long, string?>? TopMovesHandler;
         public event Action<long, string?>? SendFeedbackHandler;
-        public event Action<long>? AskForCardHandler;
+        public event Action<long>? ConfigHandler;
 
         public Telebot(string botAccessToken)
         {
@@ -103,9 +104,9 @@ namespace Telebot.Telegram
                 "/start" => Start(message.Chat.Id),
                 "/stop" => Stop(message.Chat.Id),
                 "/save" => SaveState(message.Chat.Id),
-                "/topmoves" => TopMoves(message.Chat.Id),
+                "/topmoves" => TopMoves(message.Chat.Id, commandParts.Length > 1 ? parameter : null),
                 "/feedback" => SendFeedback(message.Chat.Id, parameter),
-                "/askForCard" => AskForCard(message.Chat.Id),
+                "/config" => Config(message.Chat.Id),
                 _ => Usage(message)
             };
             await action;
@@ -114,7 +115,7 @@ namespace Telebot.Telegram
             {
                 this.usersStore.StoreUser(message.Chat.Id);
 
-                await this.bot.SendTextMessageAsync(message.Chat.Id, "Welcome to telebot. Bot application is up and running. You're subscribed on updates.");
+                await this.bot.SendTextMessageAsync(message.Chat.Id, $"Welcome to telebot. Bot application is up and running ({(int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalHours} hours, {(DateTime.Now - Process.GetCurrentProcess().StartTime).Minutes} minutes). You're subscribed on updates.");
 
                 if (StartHandler != null)
                 {
@@ -140,11 +141,11 @@ namespace Telebot.Telegram
                 }
             };
 
-            async Task TopMoves(long clientId)
+            async Task TopMoves(long clientId, string symbol)
             {
                 if (TopMovesHandler != null)
                 {
-                    TopMovesHandler(clientId);
+                    TopMovesHandler(clientId, symbol);
                 }
             };
 
@@ -156,11 +157,11 @@ namespace Telebot.Telegram
                 }
             };
 
-            async Task AskForCard(long clientId)
+            async Task Config(long clientId)
             {
-                if (AskForCardHandler != null)
+                if (ConfigHandler != null)
                 {
-                    AskForCardHandler(clientId);
+                    ConfigHandler(clientId);
                 }
             };
 

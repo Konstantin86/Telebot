@@ -1,4 +1,5 @@
-﻿using System.Linq;
+﻿using System.Diagnostics;
+using System.Linq;
 using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
@@ -40,20 +41,18 @@ namespace Telebot
             // todo add timer job to close orphant TP / SL orders once a minutes
         }
 
-        static void CurrentDomainProcessExit(object sender, EventArgs e)
+        static async void CurrentDomainProcessExit(object sender, EventArgs e)
         {
             var msg = "Bot has been stopped...";
             Console.WriteLine(msg);
 
             if (telebot != null)
             {
-                telebot.SendUpdate(msg);
+                await telebot.SendUpdate(msg);
             }
-
-            System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
         }
 
-        static void UnhandledExceptionTrapper(object sender, UnhandledExceptionEventArgs e)
+        static async void UnhandledExceptionTrapper(object sender, UnhandledExceptionEventArgs e)
         {
             Console.WriteLine($"Exception has occured: {e.ExceptionObject.ToString()}");
 
@@ -61,10 +60,8 @@ namespace Telebot
 
             if (telebot != null)
             {
-                telebot.SendUpdate($"Exception has occured: {e.ExceptionObject.ToString()}");
+                await telebot.SendUpdate($"Exception has occured: {e.ExceptionObject.ToString()}");
             }
-
-            System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
 
             Environment.Exit(1);
         }
@@ -102,15 +99,23 @@ namespace Telebot
             telebot.SaveHandler += Telebot_SaveHandler;
             telebot.StartHandler += Telebot_StartHandler;
             telebot.TopMovesHandler += Telebot_TopMovesHandler;
+            telebot.ConfigHandler += Telebot_ConfigHandler;
         }
 
-        private static async void Telebot_TopMovesHandler(long chatId)
+        private static async void Telebot_ConfigHandler(long chatId)
+        {
+            var configMessage = JsonConvert.SerializeObject(tradingConfig, Formatting.Indented);
+            await telebot.SendUpdate(configMessage, chatId);
+        }
+
+        private static async void Telebot_TopMovesHandler(long chatId, string symbol)
         {
             var topMovesMessages = tradingState.State
-                            .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.GetCurrentMaChangeHistoricalPercentage(), m.Value.KlineInsights.Last().MAChange })
+                            .Where(m => string.IsNullOrEmpty(symbol) ? true : m.Key == symbol)
+                            .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.GetCurrentMaChangeHistoricalPercentage(), m.Value.KlineInsights.Last().ClosePrice, m.Value.KlineInsights.Last().MAChange })
                             .OrderByDescending(m => m.MaChangeHistoricalPercentage)
                             .Take(20)
-                            .Select(m => $"{m.Key.ToChartHyperLink()}: {m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "growth 📈" : "drop 📉 ")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")} of historical moves)")
+                            .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "growth 📈" : "drop 📉 ")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
                             .ToList();
 
             string topMovesMessage = string.Join("\n", topMovesMessages.Select((str, i) => $"{i + 1}. {str}"));
@@ -293,6 +298,8 @@ namespace Telebot
                 ? new ChangeModel { Value = (closePrice - ma20) / ma20, IsPositive = true }
                 : new ChangeModel { Value = (ma20 - closePrice) / closePrice, IsPositive = false };
 
+            lastInsightsRecord.ClosePrice = closePrice;
+
             if (tradingState.State[symbol].EnterSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 try
@@ -318,6 +325,8 @@ namespace Telebot
                     await telebot.SendUpdate($"{symbol.ToChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastInsightsRecord.MAChange.Abs.ToString("P2")} {(lastInsightsRecord.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
                 }
             }
+
+            // Check existing open positions without take profit and set take profits automatically (make it with a separate timer job, once a ten minutes)
         }
     }
 }
