@@ -44,7 +44,7 @@ namespace Telebot.Binance
 
             try
             {
-                var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, KlineInterval.OneMinute, onKandleLineMessageCallback);
+                var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, KlineInterval.OneHour, onKandleLineMessageCallback);
             }
             catch (Exception)
             {
