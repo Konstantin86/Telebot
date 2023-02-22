@@ -3,6 +3,7 @@ using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using CryptoExchange.Net.Sockets;
+using Microsoft.VisualBasic;
 using Newtonsoft.Json;
 using Telebot.Binance;
 using Telebot.Trading;
@@ -100,6 +101,21 @@ namespace Telebot
             telebot = new Telegram.Telebot("6175182837:AAHPvR7-X9ldM7KGVN6l88z-G3k7wrFrhNs");
             telebot.SaveHandler += Telebot_SaveHandler;
             telebot.StartHandler += Telebot_StartHandler;
+            telebot.TopMovesHandler += Telebot_TopMovesHandler;
+        }
+
+        private static async void Telebot_TopMovesHandler(long chatId)
+        {
+            var topMovesMessages = tradingState.State
+                            .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.GetCurrentMaChangeHistoricalPercentage(), m.Value.KlineInsights.Last().MAChange })
+                            .OrderByDescending(m => m.MaChangeHistoricalPercentage)
+                            .Take(20)
+                            .Select(m => $"{m.Key.ToChartHyperLink()}: {m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "growth 📈" : "drop 📉 ")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")} of historical moves)")
+                            .ToList();
+
+            string topMovesMessage = string.Join("\n", topMovesMessages.Select((str, i) => $"{i + 1}. {str}"));
+
+            await telebot.SendUpdate($"Current top 20 moves from MA20 on the 1h timeframe:\n{topMovesMessage}", chatId);
         }
 
         private static void Telebot_StartHandler(long chatId)
@@ -117,7 +133,7 @@ namespace Telebot
 
                 foreach (var informationSingal in informationalSignalsForRecent24h)
                 {
-                    sb.AppendLine($"<a href=\"{informationSingal.Key.ToBinanceSymbolChartLink()}\">{informationSingal.Key}</a>: {informationSingal.Value.LastInformDate.ToString("g")}");
+                    sb.AppendLine($"{informationSingal.Key.ToChartHyperLink()}: {informationSingal.Value.LastInformDate.ToString("g")}");
                 }
             }
 
@@ -271,34 +287,35 @@ namespace Telebot
                     : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
             }
 
-            var ma20 = tradingState.State[symbol].KlineInsights.Last().MA20;
-            var maChange = (closePrice - ma20) > 0
+            var lastInsightsRecord = tradingState.State[symbol].KlineInsights.Last();
+            var ma20 = lastInsightsRecord.MA20;
+            lastInsightsRecord.MAChange = (closePrice - ma20) > 0
                 ? new ChangeModel { Value = (closePrice - ma20) / ma20, IsPositive = true }
                 : new ChangeModel { Value = (ma20 - closePrice) / closePrice, IsPositive = false };
 
-            if (tradingState.State[symbol].EnterSpikeDetected(maChange, tradingConfig.SpikeDetectionTopPercentage))
+            if (tradingState.State[symbol].EnterSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 try
                 {
-                    var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, data.Data.Data.ClosePrice, maChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
+                    var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, data.Data.Data.ClosePrice, lastInsightsRecord.MAChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
 
                     if (placingOrderResult != null)
                     {
-                        telebot.SendUpdate(placingOrderResult);
+                        await telebot.SendUpdate(placingOrderResult);
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine(ex.ToString());
-                    telebot.SendUpdate(ex.ToString());
+                    await telebot.SendUpdate(ex.ToString());
                 }
             }
-            else if (tradingState.State[symbol].InformSpikeDetected(maChange, tradingConfig.SpikeDetectionTopPercentage))
+            else if (tradingState.State[symbol].InformSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 if ((DateTime.Now - tradingState.State[symbol].LastInformDate).TotalHours > 1)
                 {
                     tradingState.State[symbol].LastInformDate = DateTime.Now;
-                    telebot.SendUpdate($"{symbol}: Price is {closePrice.ToString("C5")} which is {maChange.Abs.ToString("P2")} deviation from MA20 which is in historical top 1% range. Monitor for entry area here...");
+                    await telebot.SendUpdate($"{symbol.ToChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastInsightsRecord.MAChange.Abs.ToString("P2")} {(lastInsightsRecord.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
                 }
             }
         }

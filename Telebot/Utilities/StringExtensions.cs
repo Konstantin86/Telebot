@@ -22,5 +22,10 @@ namespace Telebot.Utilities
         {
             return $"https://www.binance.com/en/futures/{symbol}";
         }
+
+        public static string ToChartHyperLink(this string symbol)
+        {
+            return $"<a href =\"{symbol.ToBinanceSymbolChartLink()}\">{symbol}</a>";
+        }
     }
 }

@@ -14,6 +14,7 @@ namespace Telebot.Telegram
         public event Action<long>? StartHandler;
         public event Action<long>? StopHandler;
         public event Action<long>? SaveHandler;
+        public event Action<long>? TopMovesHandler;
         public event Action<long, string?>? SendFeedbackHandler;
         public event Action<long>? AskForCardHandler;
 
@@ -73,11 +74,11 @@ namespace Telebot.Telegram
             }
         }
 
-        public void SendUpdate(string message, long? chatId = null)
+        public async Task SendUpdate(string message, long? chatId = null)
         {
             if (chatId.HasValue)
             {
-                this.bot.SendTextMessageAsync(chatId.Value, message, ParseMode.Html, disableWebPagePreview: true);
+                await this.bot.SendTextMessageAsync(chatId.Value, message, ParseMode.Html, disableWebPagePreview: true);
             }
             else
             {
@@ -102,6 +103,7 @@ namespace Telebot.Telegram
                 "/start" => Start(message.Chat.Id),
                 "/stop" => Stop(message.Chat.Id),
                 "/save" => SaveState(message.Chat.Id),
+                "/topmoves" => TopMoves(message.Chat.Id),
                 "/feedback" => SendFeedback(message.Chat.Id, parameter),
                 "/askForCard" => AskForCard(message.Chat.Id),
                 _ => Usage(message)
@@ -135,6 +137,14 @@ namespace Telebot.Telegram
                 if (SaveHandler != null)
                 {
                     SaveHandler(chatId);
+                }
+            };
+
+            async Task TopMoves(long clientId)
+            {
+                if (TopMovesHandler != null)
+                {
+                    TopMovesHandler(clientId);
                 }
             };
 

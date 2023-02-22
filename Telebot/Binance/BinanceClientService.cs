@@ -17,6 +17,8 @@ namespace Telebot.Binance
         private TradingConfig tradingConfig;
         private TradingState tradingState;
 
+        private BinanceSocketClient binanceSocketClient;
+
         public BinanceClientService(string apiKey, string apiSecret, TradingConfig tradingConfig, TradingState tradingState)
         {
             this.apiKey = apiKey;
@@ -38,17 +40,17 @@ namespace Telebot.Binance
                     .Select(m => m.Pair).ToList();
             }
 
-            using (var futuresSocketClient = new BinanceSocketClient())
+            var futuresSocketClient = new BinanceSocketClient();
+
+            try
             {
-                try
-                {
-                    var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, KlineInterval.OneMinute, onKandleLineMessageCallback);
-                }
-                catch (Exception)
-                {
-                    await futuresSocketClient.UnsubscribeAllAsync();
-                    throw;
-                }
+                var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, KlineInterval.OneMinute, onKandleLineMessageCallback);
+            }
+            catch (Exception)
+            {
+                await futuresSocketClient.UnsubscribeAllAsync();
+                futuresSocketClient.Dispose();
+                throw;
             }
         }
 

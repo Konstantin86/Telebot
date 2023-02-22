@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Telebot.Utilities;
 
 namespace Telebot.Trading
 {
@@ -16,6 +17,11 @@ namespace Telebot.Trading
         {
             return (double)KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Where(m => m.CandlesTillStopLoss == null && m.CandlesTillProfit != null).Count() 
                 / KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Count();
+        }
+
+        public double GetCurrentMaChangeHistoricalPercentage()
+        {
+            return KlineInsights.Last().MAChange.Abs.PercentileOf(KlineInsightsOrderedByPerformance.Select(m => m.MAChange.Abs).ToArray());
         }
 
         public List<BinanceKlineInsights> GetStopLossCases(double topMovesPercent)
