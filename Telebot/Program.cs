@@ -1,10 +1,7 @@
-﻿using System.Diagnostics;
-using System.Linq;
-using System.Text;
+﻿using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using CryptoExchange.Net.Sockets;
-using Microsoft.VisualBasic;
 using Newtonsoft.Json;
 using Telebot.Binance;
 using Telebot.Trading;
@@ -22,6 +19,7 @@ namespace Telebot
         static TaLibManager taLibManager = new TaLibManager();
 
         const string TradingStateFileReference = "tradingState.json";
+        const string TradingConfigFileReference = "tradingConfig.json";
         const int BinanceApiDataRecordsMaxCount = 500;
 
         static async Task Main(string[] args)
@@ -29,16 +27,45 @@ namespace Telebot
             AppDomain.CurrentDomain.ProcessExit += CurrentDomainProcessExit;
             AppDomain.CurrentDomain.UnhandledException += UnhandledExceptionTrapper;
 
+            InitTradingConfig();
+
             RunTelegramBot();
             InitBinanceClient();
+
             await LoadTradingInsights();
             InitBinanceClient();
             await RunTradingBot();
 
+            RunBackgroundJobs();
+
             Console.ReadLine();
 
             System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
+            System.IO.File.WriteAllText(TradingConfigFileReference, JsonConvert.SerializeObject(tradingConfig));
             // todo add timer job to close orphant TP / SL orders once a minutes
+        }
+
+        private static void InitTradingConfig()
+        {
+            tradingConfig = System.IO.File.Exists(TradingConfigFileReference) ? JsonConvert.DeserializeObject<TradingConfig>(System.IO.File.ReadAllText(TradingConfigFileReference)) ?? new TradingConfig() : new TradingConfig();
+        }
+
+        private static void RunBackgroundJobs()
+        {
+            var setTakeProfitsJob = new Timer(SetTakeProfitsJobHandler, null, TimeSpan.Zero, TimeSpan.FromMinutes(10));
+        }
+
+        private static async void SetTakeProfitsJobHandler(object? state)
+        {
+            if (binanceClientService != null && tradingConfig.AutosetTakeProfit)
+            {
+                var messages = await binanceClientService.SetTakeProfitsWhereMissing();
+
+                foreach (var msg in messages)
+                {
+                    await telebot.SendUpdate(msg);
+                }
+            }
         }
 
         static async void CurrentDomainProcessExit(object sender, EventArgs e)
@@ -90,6 +117,8 @@ namespace Telebot
                 //var slCasesToStudy = tradingState.State[symbol].GetStopLossCases(tradingConfig.SpikeDetectionTopPercentage);
             }
 
+            tradingState.RefreshVolumeProfileData();
+
             System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
         }
 
@@ -100,12 +129,93 @@ namespace Telebot
             telebot.StartHandler += Telebot_StartHandler;
             telebot.TopMovesHandler += Telebot_TopMovesHandler;
             telebot.ConfigHandler += Telebot_ConfigHandler;
+            telebot.VolumeProfileHandler += Telebot_VolumeProfileHandler;
         }
 
-        private static async void Telebot_ConfigHandler(long chatId)
+        private static async void Telebot_VolumeProfileHandler(long chatId, string[] parameters)
         {
-            var configMessage = JsonConvert.SerializeObject(tradingConfig, Formatting.Indented);
-            await telebot.SendUpdate(configMessage, chatId);
+            if (parameters == null || parameters.Length == 0) return;
+
+            var symbol = parameters[0];
+
+            if (symbol == null) return;
+
+            tradingState.State[symbol.ToSymbol()].RefreshPriceBins(parameters.Length > 1 ? int.Parse(parameters[1]) : 90);
+            var bins = tradingState.State[symbol.ToSymbol()].PriceBins;
+
+            var sb = new StringBuilder();
+
+            var rounder = bins.First().Price.GetThreeDigitsRounder();
+
+            var strongestLevels = FindPeaks(bins)
+                                    .Where(m => m.Significance > 0.75m)
+                                    .OrderByDescending(m => m.Significance)
+                                    .Select(m => m.Price)
+                                    .ToList();
+
+            double currentPrice = tradingState.State[symbol.ToSymbol()].KlineInsights.Last().ClosePrice;
+            var closestPriceBin = currentPrice.FindClosestValue(bins.Select(m => m.Price).ToList());
+
+            foreach (var bin in bins.OrderByDescending(b => b.Price))
+            {
+                bool isMajorLevel = strongestLevels.Contains(bin.Price);
+                bool isClosesPriceBin = bin.Price == closestPriceBin;
+                
+                double roundedPrice = (Math.Round(((bin.Price + (bin.Price + tradingState.State[symbol.ToSymbol()].BinSize)) / 2) / rounder) * rounder);
+
+                var vpInfoLine = $"${roundedPrice.ToString("G5")}: " +
+                    //$"({bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()).ToString("P0")})" +
+                    $"{new string('-', Convert.ToInt32(Math.Ceiling((bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()) * 100) / 5)))}";
+
+                sb.AppendLine($"{(isMajorLevel ? $"<b>{vpInfoLine}> ({strongestLevels.IndexOf(bin.Price) + 1})</b>" : vpInfoLine)}{(isClosesPriceBin ? $"      >> ${currentPrice.ToString("G5")}" : "")}");
+            }
+
+            await telebot.SendUpdate(sb.ToString(), chatId);
+        }
+
+        public static List<PriceBin> FindPeaks(List<PriceBin> values)
+        {
+            var peaks = new List<PriceBin>();
+            var prevValue = decimal.MinValue;
+            var currentValue = decimal.MinValue;
+            var volumeValues = values.Select(m => m.Volume).ToArray();
+
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (i > 0)
+                    prevValue = volumeValues[i - 1];
+
+                currentValue = volumeValues[i];
+
+                if (i < values.Count - 1)
+                    if (currentValue > prevValue && currentValue > volumeValues[i + 1])   // check if current value is greater than both its neighbors
+                        peaks.Add(values[i]);
+            }
+
+            return peaks;
+        }
+
+        private static async void Telebot_ConfigHandler(long chatId, string[] parameters)
+        {
+            if (parameters == null || parameters.Length < 2)
+            {
+                var configMessage = JsonConvert.SerializeObject(tradingConfig, Formatting.Indented);
+                await telebot.SendUpdate(configMessage, chatId);
+            }
+            else
+            {
+                var propertyInfo = tradingConfig.GetType().GetProperty(parameters[0]);
+                if (propertyInfo != null && propertyInfo.CanWrite)
+                {
+                    propertyInfo.SetValue(tradingConfig, Convert.ChangeType(parameters[1], propertyInfo.PropertyType));
+                    await telebot.SendUpdate($"Parameter {parameters[0]} has been set to {parameters[1]}");
+                    File.WriteAllText(TradingConfigFileReference, JsonConvert.SerializeObject(tradingConfig));
+                }
+                else
+                {
+                    await telebot.SendUpdate($"Parameter {parameters[0]} cannot be found");
+                }
+            }
         }
 
         private static async void Telebot_TopMovesHandler(long chatId, string symbol)
@@ -115,7 +225,7 @@ namespace Telebot
                             .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.GetCurrentMaChangeHistoricalPercentage(), m.Value.KlineInsights.Last().ClosePrice, m.Value.KlineInsights.Last().MAChange })
                             .OrderByDescending(m => m.MaChangeHistoricalPercentage)
                             .Take(20)
-                            .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "growth 📈" : "drop 📉 ")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
+                            .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {(m.MAChange.IsPositive ? "+" : "-")}{m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "📈" : "📉")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
                             .ToList();
 
             string topMovesMessage = string.Join("\n", topMovesMessages.Select((str, i) => $"{i + 1}. {str}"));
@@ -290,6 +400,8 @@ namespace Telebot
                 klineInsights.MAChange = (klineInsights.HighPrice - klineInsights.MA20) > 0
                     ? new ChangeModel { Value = (klineInsights.HighPrice - klineInsights.MA20) / klineInsights.MA20, IsPositive = true }
                     : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
+
+                tradingState.State[symbol].RefreshPriceBins();
             }
 
             var lastInsightsRecord = tradingState.State[symbol].KlineInsights.Last();

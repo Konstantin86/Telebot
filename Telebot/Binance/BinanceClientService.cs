@@ -2,8 +2,10 @@
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using Binance.Net.Objects;
+using CryptoExchange.Net.CommonObjects;
 using CryptoExchange.Net.Objects;
 using CryptoExchange.Net.Sockets;
+using System.Drawing;
 using Telebot.Trading;
 using Telebot.Utilities;
 
@@ -100,8 +102,11 @@ namespace Telebot.Binance
                     {
                         tradingState.State[symbol].LastOrderDate = DateTime.Now;
 
-                        var takeProfitOrderResponse = await client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell, FuturesOrderType.TakeProfitMarket, quantity, timeInForce: TimeInForce.GoodTillCanceled, stopPrice: Math.Round(side == OrderSide.Sell ? price - (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)) : price + (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)), tradeSymbolInfo.PricePrecision), closePosition: true);
-                        var stopLossOrderResponse = await client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell, FuturesOrderType.StopMarket, quantity, timeInForce: TimeInForce.GoodTillCanceled, stopPrice: Math.Round(side == OrderSide.Sell ? price + (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)) : price - (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)), tradeSymbolInfo.PricePrecision), closePosition: true);
+                        decimal takeProfitStopPrice = Math.Round(Math.Round(side == OrderSide.Sell ? price - (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)) : price + (price * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)), tradeSymbolInfo.PricePrecision) / tradeSymbolInfo.PriceFilter.TickSize, MidpointRounding.ToEven) * tradeSymbolInfo.PriceFilter.TickSize;
+                        decimal stopLossStopPrice = Math.Round(Math.Round(side == OrderSide.Sell ? price + (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)) : price - (price * Convert.ToDecimal(tradingConfig.StopLossPercentage)), tradeSymbolInfo.PricePrecision) / tradeSymbolInfo.PriceFilter.TickSize, MidpointRounding.ToEven) * tradeSymbolInfo.PriceFilter.TickSize;
+
+                        var takeProfitOrderResponse = await client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell, FuturesOrderType.TakeProfitMarket, quantity, timeInForce: TimeInForce.GoodTillCanceled, stopPrice: takeProfitStopPrice, closePosition: true);
+                        var stopLossOrderResponse = await client.UsdFuturesApi.Trading.PlaceOrderAsync(symbol, side == OrderSide.Sell ? OrderSide.Buy : OrderSide.Sell, FuturesOrderType.StopMarket, quantity, timeInForce: TimeInForce.GoodTillCanceled, stopPrice: stopLossStopPrice, closePosition: true);
 
                         string tpMessage = takeProfitOrderResponse.Success ? "TP is automatically set to fix 1% of profit"
                             : $"TP wasn't set due to error{(takeProfitOrderResponse.Error != null ? $":{takeProfitOrderResponse.Error.Code}:{takeProfitOrderResponse.Error.Message}" : "")}";
@@ -138,6 +143,104 @@ namespace Telebot.Binance
                 var exchangeInfo = await client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
                 return exchangeInfo.Data.Symbols.Where(m => m.Pair.EndsWith("USDT") && m.ContractType == ContractType.Perpetual && m.Status == SymbolStatus.Trading).ToDictionary(k => k.Pair, v => v.ListingDate);
             }
+        }
+
+        internal async Task<List<string>> SetTakeProfitsWhereMissing()
+        {
+            var messages = new List<string>();
+
+            using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
+            {
+                var accountInfo = await client.UsdFuturesApi.Account.GetAccountInfoAsync();
+                var ordersResponse = await client.UsdFuturesApi.Trading.GetOpenOrdersAsync();
+                var tradeSymbolsInfo = await client.UsdFuturesApi.ExchangeData.GetExchangeInfoAsync();
+
+                if (!accountInfo.Success)
+                {
+                    messages.Add($"GetAccountInfoAsync() calling error: {accountInfo.Error?.Message}");
+                }
+
+                if (!ordersResponse.Success)
+                {
+                    messages.Add($"GetOpenOrdersAsync() calling error: {ordersResponse.Error?.Message}");
+                }
+
+                if (!tradeSymbolsInfo.Success)
+                {
+                    messages.Add($"GetExchangeInfoAsync() calling error: {tradeSymbolsInfo.Error?.Message}");
+                }
+
+                foreach (var openPosition in accountInfo.Data.Positions.Where(m => m.UnrealizedPnl != 0))
+                {
+                    if (ordersResponse.Success)
+                    {
+                        if (!ordersResponse.Data.Any(m => m.Symbol == openPosition.Symbol && (m.Type == FuturesOrderType.TakeProfit || m.Type == FuturesOrderType.TakeProfitMarket)))
+                        {
+                            var tradeSymbolInfo = tradeSymbolsInfo.Data.Symbols.FirstOrDefault(m => m.BaseAsset.ToUpper() == openPosition.Symbol.ToAsset().ToUpper());
+
+                            var bookPrice = await client.UsdFuturesApi.ExchangeData.GetBookPriceAsync(openPosition.Symbol);
+                            decimal orderPrice = (bookPrice.Data.BestAskPrice + bookPrice.Data.BestBidPrice) / 2;
+
+                            OrderSide? orderSide = null;
+
+                            if (openPosition.EntryPrice < bookPrice.Data.BestBidPrice && openPosition.EntryPrice < bookPrice.Data.BestAskPrice)
+                            {
+                                if (openPosition.UnrealizedPnl < 0)
+                                {
+                                    orderSide = OrderSide.Buy;
+                                }
+                                else if (openPosition.UnrealizedPnl > 0)
+                                {
+                                    orderSide = OrderSide.Sell;
+                                }
+                            }
+                            else if (openPosition.EntryPrice > bookPrice.Data.BestBidPrice && openPosition.EntryPrice > bookPrice.Data.BestAskPrice)
+                            {
+                                if (openPosition.UnrealizedPnl < 0)
+                                {
+                                    orderSide = OrderSide.Sell;
+                                }
+                                else if (openPosition.UnrealizedPnl > 0)
+                                {
+                                    orderSide = OrderSide.Buy;
+                                }
+                            }
+
+                            if (!orderSide.HasValue)
+                            {
+                                messages.Add($"[{openPosition.Symbol}]: Impossible to define current position side, please set take profit order manually with Binance application");
+                                continue;
+                            }
+
+                            var stopPrice = Math.Round(Math.Round(orderSide == OrderSide.Sell
+                                ? openPosition.EntryPrice + (openPosition.EntryPrice * Convert.ToDecimal(tradingConfig.TakeProfitPercentage))
+                                : openPosition.EntryPrice - (openPosition.EntryPrice * Convert.ToDecimal(tradingConfig.TakeProfitPercentage)), tradeSymbolInfo.PricePrecision) / tradeSymbolInfo.PriceFilter.TickSize, MidpointRounding.ToEven) * tradeSymbolInfo.PriceFilter.TickSize;
+
+                            var limitPrice = stopPrice;
+
+                            var takeProfitOrderResponse = await client.UsdFuturesApi.Trading.PlaceOrderAsync(
+                                openPosition.Symbol,
+                                orderSide.Value,
+                                FuturesOrderType.TakeProfitMarket,
+                                Math.Round(openPosition.InitialMargin, tradeSymbolInfo.QuantityPrecision),
+                                timeInForce: TimeInForce.GoodTillCanceled,
+                                stopPrice: stopPrice,
+                                closePosition: true);
+
+                            if (!takeProfitOrderResponse.Success)
+                            {
+                                messages.Add($"[{openPosition.Symbol}]: {takeProfitOrderResponse.Error?.Message}, please set take profit order manually with Binance application");
+                            }
+                            else
+                            {
+                                messages.Add($"[{openPosition.Symbol}]: Take profit has been set!");
+                            }
+                        }
+                    }
+                }
+            }
+
+            return messages;
         }
     }
 }

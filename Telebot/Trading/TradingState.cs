@@ -1,8 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using Newtonsoft.Json;
 
 namespace Telebot.Trading
 {
@@ -10,10 +6,12 @@ namespace Telebot.Trading
     {
         public Dictionary<string, SymbolTradeState> State { get; set; } = new Dictionary<string, SymbolTradeState>();
 
-        internal bool CanTrade()
+        public void RefreshVolumeProfileData()
         {
-            // check if there are place for new positions
-            throw new NotImplementedException();
+            foreach (var pair in State)
+            {
+                pair.Value.RefreshPriceBins();
+            }
         }
     }
 }

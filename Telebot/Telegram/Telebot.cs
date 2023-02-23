@@ -16,8 +16,9 @@ namespace Telebot.Telegram
         public event Action<long>? StopHandler;
         public event Action<long>? SaveHandler;
         public event Action<long, string?>? TopMovesHandler;
+        public event Action<long, string[]>? VolumeProfileHandler;
         public event Action<long, string?>? SendFeedbackHandler;
-        public event Action<long>? ConfigHandler;
+        public event Action<long, string[]>? ConfigHandler;
 
         public Telebot(string botAccessToken)
         {
@@ -95,7 +96,8 @@ namespace Telebot.Telegram
 
             string[]? commandParts = message.Text.Split(' ');
             string? command = commandParts.First();
-            string? parameter = commandParts.Last();
+            string? parameter = commandParts.Length > 1 ? commandParts.Last() : null;
+            string[]? parameters = commandParts.Length > 1 ? commandParts.Skip(1).ToArray() : null;
 
             var fromServer = parameter == "fromServer";
 
@@ -104,9 +106,9 @@ namespace Telebot.Telegram
                 "/start" => Start(message.Chat.Id),
                 "/stop" => Stop(message.Chat.Id),
                 "/save" => SaveState(message.Chat.Id),
-                "/topmoves" => TopMoves(message.Chat.Id, commandParts.Length > 1 ? parameter : null),
-                "/feedback" => SendFeedback(message.Chat.Id, parameter),
-                "/config" => Config(message.Chat.Id),
+                "/topmoves" => TopMoves(message.Chat.Id, parameter),
+                "/vp" => VolumeProfile(message.Chat.Id, parameters),
+                "/config" => Config(message.Chat.Id, parameters),
                 _ => Usage(message)
             };
             await action;
@@ -141,6 +143,14 @@ namespace Telebot.Telegram
                 }
             };
 
+            async Task VolumeProfile(long clientId, string[] parameters)
+            {
+                if (VolumeProfileHandler != null)
+                {
+                    VolumeProfileHandler(clientId, parameters);
+                }
+            };
+
             async Task TopMoves(long clientId, string symbol)
             {
                 if (TopMovesHandler != null)
@@ -149,19 +159,11 @@ namespace Telebot.Telegram
                 }
             };
 
-            async Task SendFeedback(long clientId, string messageText)
-            {
-                if (SendFeedbackHandler != null)
-                {
-                    SendFeedbackHandler(clientId, messageText);
-                }
-            };
-
-            async Task Config(long clientId)
+            async Task Config(long clientId, string[] parameters)
             {
                 if (ConfigHandler != null)
                 {
-                    ConfigHandler(clientId);
+                    ConfigHandler(clientId, parameters);
                 }
             };
 

@@ -1,11 +1,5 @@
 ﻿using Binance.Net.Interfaces;
 using Newtonsoft.Json;
-using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Telebot.Trading
 {
@@ -19,9 +13,11 @@ namespace Telebot.Trading
             HighPrice = Convert.ToDouble(binanceKline.HighPrice);
             LowPrice = Convert.ToDouble(binanceKline.LowPrice);
             OpenTime = binanceKline.OpenTime;
+            Volume = binanceKline.Volume;
         }
 
         public DateTime OpenTime { get; set; }
+        public decimal Volume { get; set; }
         public double ClosePrice { get; set; }
         public double LowPrice { get; set; }
         public double HighPrice { get; set; }
