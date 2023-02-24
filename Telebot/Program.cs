@@ -22,6 +22,8 @@ namespace Telebot
         const string TradingConfigFileReference = "tradingConfig.json";
         const int BinanceApiDataRecordsMaxCount = 500;
 
+        static Timer setTakeProfitsJob = null;
+
         static async Task Main(string[] args)
         {
             AppDomain.CurrentDomain.ProcessExit += CurrentDomainProcessExit;
@@ -52,7 +54,7 @@ namespace Telebot
 
         private static void RunBackgroundJobs()
         {
-            var setTakeProfitsJob = new Timer(SetTakeProfitsJobHandler, null, TimeSpan.Zero, TimeSpan.FromMinutes(10));
+            setTakeProfitsJob = new Timer(SetTakeProfitsJobHandler, null, TimeSpan.Zero, TimeSpan.FromMinutes(15));
         }
 
         private static async void SetTakeProfitsJobHandler(object? state)
@@ -145,8 +147,6 @@ namespace Telebot
 
             var sb = new StringBuilder();
 
-            var rounder = bins.First().Price.GetThreeDigitsRounder();
-
             var strongestLevels = FindPeaks(bins)
                                     .Where(m => m.Significance > 0.75m)
                                     .OrderByDescending(m => m.Significance)
@@ -155,6 +155,7 @@ namespace Telebot
 
             double currentPrice = tradingState.State[symbol.ToSymbol()].KlineInsights.Last().ClosePrice;
             var closestPriceBin = currentPrice.FindClosestValue(bins.Select(m => m.Price).ToList());
+            var rounder = bins.Last().Price.GetThreeDigitsRounder();
 
             foreach (var bin in bins.OrderByDescending(b => b.Price))
             {
@@ -167,7 +168,7 @@ namespace Telebot
                     //$"({bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()).ToString("P0")})" +
                     $"{new string('-', Convert.ToInt32(Math.Ceiling((bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()) * 100) / 5)))}";
 
-                sb.AppendLine($"{(isMajorLevel ? $"<b>{vpInfoLine}> ({strongestLevels.IndexOf(bin.Price) + 1})</b>" : vpInfoLine)}{(isClosesPriceBin ? $"      >> ${currentPrice.ToString("G5")}" : "")}");
+                sb.AppendLine($"{(isMajorLevel ? $"<b>{vpInfoLine}> ({strongestLevels.IndexOf(bin.Price) + 1})</b>" : vpInfoLine)}{(isClosesPriceBin ? $" >> ${currentPrice.ToString("G5")}" : "")}");
             }
 
             await telebot.SendUpdate(sb.ToString(), chatId);
@@ -390,6 +391,8 @@ namespace Telebot
                 //telebot.SendUpdate($"New futures trading pair {symbol} detected. Please restart the bot to load insights for it in 5 days from now in order to trade this symbol");
                 return;    // New symbols needs app reloading to work properly, todo add some telegram / console message here...
             }
+
+            var symbolsToMonitor = new []{ "BTCUSDT" }.Union(tradingState.State.Where(m => m.Value.IsMarkedOpen()).Select(m => m.Key)).ToList();
 
             if (data.Data.Data.Final)
             {

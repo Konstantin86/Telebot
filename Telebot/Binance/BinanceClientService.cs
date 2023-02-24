@@ -2,6 +2,7 @@
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using Binance.Net.Objects;
+using Binance.Net.Objects.Models.Futures;
 using CryptoExchange.Net.CommonObjects;
 using CryptoExchange.Net.Objects;
 using CryptoExchange.Net.Sockets;
@@ -170,7 +171,11 @@ namespace Telebot.Binance
                     messages.Add($"GetExchangeInfoAsync() calling error: {tradeSymbolsInfo.Error?.Message}");
                 }
 
-                foreach (var openPosition in accountInfo.Data.Positions.Where(m => m.UnrealizedPnl != 0))
+                var openPositions = accountInfo.Data.Positions.Where(m => m.UnrealizedPnl != 0);
+
+                MarkObsoletePositionsAsClosed(openPositions);
+
+                foreach (var openPosition in openPositions)
                 {
                     if (ordersResponse.Success)
                     {
@@ -241,6 +246,17 @@ namespace Telebot.Binance
             }
 
             return messages;
+        }
+
+        private void MarkObsoletePositionsAsClosed(IEnumerable<BinancePositionInfoUsdt> openPositions)
+        {
+            foreach (var tradingItem in tradingState.State)
+            {
+                if (tradingItem.Value.IsMarkedOpen() && openPositions.FirstOrDefault(m => m.Symbol == tradingItem.Key) == null)
+                {
+                    tradingItem.Value.MarkClosed();
+                }
+            }
         }
     }
 }
