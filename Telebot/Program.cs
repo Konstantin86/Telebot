@@ -1,6 +1,7 @@
 ﻿using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
+using CryptoExchange.Net.CommonObjects;
 using CryptoExchange.Net.Sockets;
 using Newtonsoft.Json;
 using Telebot.Binance;
@@ -107,16 +108,21 @@ namespace Telebot
             {
                 Console.WriteLine($"{symbol}: Loading data ({count++} / {symbols.Count()})...");
 
-                var klineInsightsData = await LoadInsightsForSymbol(symbol);
+                foreach (var interval in new[] { KlineInterval.OneHour, KlineInterval.OneDay })
+                {
+                    var klineInsightsData = await LoadInsightsForSymbol(symbol, interval);
 
-                if (!tradingState.State.ContainsKey(symbol))
-                    tradingState.State[symbol] = new SymbolTradeState { KlineInsights = klineInsightsData };
+                    if (!tradingState.State.ContainsKey(symbol))
+                        tradingState.State[symbol] = new SymbolTradeState { IntervalData = new Dictionary<KlineInterval, IntervalData> { { interval, new IntervalData { KlineInsights = klineInsightsData } } } };
+                    else
+                    {
+                        tradingState.State[symbol].IntervalData[interval] = new IntervalData { KlineInsights = klineInsightsData };
+                    }
+                }
 
-                Console.WriteLine($"{symbol}: (listing date {symbols[symbol].ToShortDateString()})" +
-                    $" {tradingState.State[symbol].GetProfitability(tradingConfig.SpikeDetectionTopPercentage).ToString("P2")} profitability, " +
-                    $"average in  {tradingState.State[symbol].GetProfitAverageTimeInCandles(tradingConfig.SpikeDetectionTopPercentage)} candles");
-
-                //var slCasesToStudy = tradingState.State[symbol].GetStopLossCases(tradingConfig.SpikeDetectionTopPercentage);
+                Console.WriteLine($"{symbol}: (listing date {symbols[symbol].ToShortDateString()})");
+                    //$" {tradingState.State[symbol].GetProfitability(tradingConfig.SpikeDetectionTopPercentage).ToString("P2")} profitability, " +
+                    //$"average in  {tradingState.State[symbol].GetProfitAverageTimeInCandles(tradingConfig.SpikeDetectionTopPercentage)} candles") ;
             }
 
             tradingState.RefreshVolumeProfileData();
@@ -153,7 +159,7 @@ namespace Telebot
                                     .Select(m => m.Price)
                                     .ToList();
 
-            double currentPrice = tradingState.State[symbol.ToSymbol()].KlineInsights.Last().ClosePrice;
+            double currentPrice = tradingState.State[symbol.ToSymbol()].IntervalData[KlineInterval.OneHour].KlineInsights.Last().ClosePrice;
             var closestPriceBin = currentPrice.FindClosestValue(bins.Select(m => m.Price).ToList());
             var rounder = bins.Last().Price.GetThreeDigitsRounder();
 
@@ -219,11 +225,14 @@ namespace Telebot
             }
         }
 
-        private static async void Telebot_TopMovesHandler(long chatId, string symbol)
+        private static async void Telebot_TopMovesHandler(long chatId, string[] parameters)
         {
+            var symbol = parameters[0];
+            var interval = parameters.Length > 1 ? parameters[1] == "1d" ? KlineInterval.OneDay : KlineInterval.OneHour : KlineInterval.OneHour;
+
             var topMovesMessages = tradingState.State
                             .Where(m => string.IsNullOrEmpty(symbol) ? true : m.Key == symbol)
-                            .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.GetCurrentMaChangeHistoricalPercentage(), m.Value.KlineInsights.Last().ClosePrice, m.Value.KlineInsights.Last().MAChange })
+                            .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.IntervalData[interval].GetCurrentMaChangeHistoricalPercentage(), m.Value.IntervalData[interval].KlineInsights.Last().ClosePrice, m.Value.IntervalData[interval].KlineInsights.Last().MAChange })
                             .OrderByDescending(m => m.MaChangeHistoricalPercentage)
                             .Take(20)
                             .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {(m.MAChange.IsPositive ? "+" : "-")}{m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "📈" : "📉")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
@@ -275,32 +284,46 @@ namespace Telebot
             telebot?.SendUpdate("State was successfully saved", chatId);
         }
 
-        private static async Task RunTradingBot() => await binanceClientService.OpenFuturesStream(HandleSymbolUpdate);
+        private static async Task RunTradingBot() 
+        { 
+            await binanceClientService.OpenFuturesStream(HandleOneHourSymbolUpdate, KlineInterval.OneHour);
+            await binanceClientService.OpenFuturesStream(HandleOneDaySymbolUpdate, KlineInterval.OneHour);
+        }
         private static void InitBinanceClient() => binanceClientService = new BinanceClientService("gvNqiHE4DJKhSREACPghpwSb9zrXaObCIriMJAZN1J0ptfLY8cLexZpqkXJGqD0s", "S1mMv1ZXUOWyWz6eEJCtZe23Pxvyx7As51EfVniJtmKXGQTClD7jxnHvs0W6XXnK", tradingConfig, tradingState);
 
-        private static async Task<List<BinanceKlineInsights>> LoadInsightsForSymbol(string symbol)
+        private static async Task<List<BinanceKlineInsights>> LoadInsightsForSymbol(string symbol, KlineInterval interval)
         {
             var marketData = new List<BinanceKlineInsights>();
 
             bool dataPreloaded = tradingState.State.ContainsKey(symbol);
 
-            var hoursToLoad = !dataPreloaded ? tradingConfig.InsightsDataRecordsAmount : (int)(DateTime.UtcNow - tradingState.State[symbol].KlineInsights.Last().OpenTime).TotalHours;
+            int candlesToLoad = 0;
 
-            int loadingPagesCount = (int)Math.Round((double)hoursToLoad / BinanceApiDataRecordsMaxCount, MidpointRounding.ToPositiveInfinity);
+            if (dataPreloaded)
+            {
+                var timeFromLastCandleOpen = DateTime.UtcNow - tradingState.State[symbol].IntervalData[interval].KlineInsights.Last().OpenTime;
+                candlesToLoad = interval == KlineInterval.OneHour ? (int)timeFromLastCandleOpen.TotalHours : (int)timeFromLastCandleOpen.TotalDays;
+            }
+            else
+            {
+                candlesToLoad = interval == KlineInterval.OneHour ? tradingConfig.InsightsDataRecordsAmount : tradingConfig.InsightsDataRecordsAmount / 24;
+            }
+
+            int loadingPagesCount = (int)Math.Round((double)candlesToLoad / BinanceApiDataRecordsMaxCount, MidpointRounding.ToPositiveInfinity);
 
             while (loadingPagesCount > 0)
             {
-                int hoursCount = Math.Min(hoursToLoad, BinanceApiDataRecordsMaxCount);
+                int candlesCount = Math.Min(candlesToLoad, BinanceApiDataRecordsMaxCount);
 
-                var start = DateTime.UtcNow.RewindPeriodsBack(KlineInterval.OneHour, Math.Min(hoursCount * loadingPagesCount, hoursToLoad));
-                var end = DateTime.UtcNow.RewindPeriodsBack(KlineInterval.OneHour, Math.Min(hoursCount * loadingPagesCount, hoursToLoad)).AddHours(hoursCount);
+                var start = DateTime.UtcNow.RewindPeriodsBack(interval, Math.Min(candlesCount * loadingPagesCount, candlesToLoad));
+                var end = DateTime.UtcNow.RewindPeriodsBack(interval, Math.Min(candlesCount * loadingPagesCount, candlesToLoad)).AddHours(candlesCount);
 
-                var result = await binanceClientService.GetMarketData(symbol, KlineInterval.OneHour, start, end);
+                var result = await binanceClientService.GetMarketData(symbol, interval, start, end);
                 marketData.AddRange(result.Data.Where(m => m.CloseTime < DateTime.UtcNow).Select(m => new BinanceKlineInsights(m)));
 
                 loadingPagesCount--;
 
-                hoursToLoad = hoursToLoad - hoursCount;
+                candlesToLoad = candlesToLoad - candlesCount;
             }
 
             var taProcessed = new List<BinanceKlineInsights>();
@@ -313,9 +336,9 @@ namespace Telebot
 
                     if (dataPreloaded)
                     {
-                        tradingState.State[symbol].KlineInsights.Add(kline);
+                        tradingState.State[symbol].IntervalData[interval].KlineInsights.Add(kline);
 
-                        kline.MA20 = taLibManager.Ma(tradingState.State[symbol].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                        kline.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[interval].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
                         kline.MAChange = (kline.HighPrice - kline.MA20) > 0
                             ? new ChangeModel { Value = (kline.HighPrice - kline.MA20) / kline.MA20, IsPositive = true }
                             : new ChangeModel { Value = (kline.MA20 - kline.LowPrice) / kline.LowPrice, IsPositive = false };
@@ -333,55 +356,74 @@ namespace Telebot
                 }
             }
 
-            var orderedByMaPerformance = (dataPreloaded ? tradingState.State[symbol].KlineInsights : taProcessed).Where(m => m.MAChange != null).OrderByDescending(m => m.MAChange.Abs).ToList();
+            //var orderedByMaPerformance = (dataPreloaded ? tradingState.State[symbol].KlineInsights : taProcessed).Where(m => m.MAChange != null).OrderByDescending(m => m.MAChange.Abs).ToList();
 
-            var topPercentage = orderedByMaPerformance.Take((int)((dataPreloaded ? tradingState.State[symbol].KlineInsights : marketData).Count * tradingConfig.SpikeDetectionTopPercentage)).ToList();
+            //var topPercentage = orderedByMaPerformance.Take((int)((dataPreloaded ? tradingState.State[symbol].KlineInsights : marketData).Count * tradingConfig.SpikeDetectionTopPercentage)).ToList();
 
-            foreach (var kline in topPercentage)
-            {
-                var subsequentKLines = (dataPreloaded ? tradingState.State[symbol].KlineInsights : marketData).SkipWhile(m => kline.OpenTime != m.OpenTime).Skip(1).ToList();
+            //foreach (var kline in topPercentage)
+            //{
+            //    var subsequentKLines = (dataPreloaded ? tradingState.State[symbol].KlineInsights : marketData).SkipWhile(m => kline.OpenTime != m.OpenTime).Skip(1).ToList();
 
-                int candlesCount = 0;
+            //    int candlesCount = 0;
 
-                foreach (var marketKline in subsequentKLines)
-                {
-                    candlesCount++;
+            //    foreach (var marketKline in subsequentKLines)
+            //    {
+            //        candlesCount++;
 
-                    if (kline.MAChange.IsPositive)
-                    {
-                        if (marketKline.LowPrice < (kline.HighPrice - (kline.HighPrice * tradingConfig.TakeProfitPercentage)))
-                        {
-                            kline.CandlesTillProfit = candlesCount;
-                            break;
-                        }
+            //        if (kline.MAChange.IsPositive)
+            //        {
+            //            if (marketKline.LowPrice < (kline.HighPrice - (kline.HighPrice * tradingConfig.TakeProfitPercentage)))
+            //            {
+            //                kline.CandlesTillProfit = candlesCount;
+            //                break;
+            //            }
 
-                        if (marketKline.HighPrice > (kline.HighPrice + (kline.HighPrice * tradingConfig.StopLossPercentage)))
-                        {
-                            kline.CandlesTillStopLoss = candlesCount;
-                            break;
-                        }
-                    }
-                    else
-                    {
-                        if (marketKline.HighPrice > (kline.LowPrice + (kline.LowPrice * tradingConfig.TakeProfitPercentage)))
-                        {
-                            kline.CandlesTillProfit = candlesCount;
-                            break;
-                        }
+            //            if (marketKline.HighPrice > (kline.HighPrice + (kline.HighPrice * tradingConfig.StopLossPercentage)))
+            //            {
+            //                kline.CandlesTillStopLoss = candlesCount;
+            //                break;
+            //            }
+            //        }
+            //        else
+            //        {
+            //            if (marketKline.HighPrice > (kline.LowPrice + (kline.LowPrice * tradingConfig.TakeProfitPercentage)))
+            //            {
+            //                kline.CandlesTillProfit = candlesCount;
+            //                break;
+            //            }
 
-                        if (marketKline.LowPrice < (kline.LowPrice - (kline.LowPrice * tradingConfig.StopLossPercentage)))
-                        {
-                            kline.CandlesTillStopLoss = candlesCount;
-                            break;
-                        }
-                    }
-                }
-            }
+            //            if (marketKline.LowPrice < (kline.LowPrice - (kline.LowPrice * tradingConfig.StopLossPercentage)))
+            //            {
+            //                kline.CandlesTillStopLoss = candlesCount;
+            //                break;
+            //            }
+            //        }
+            //    }
+            //}
 
             return taProcessed;
         }
 
-        private static async void HandleSymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
+        private static async void HandleOneDaySymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
+        {
+            var symbol = data.Data.Symbol;
+            var closePrice = Convert.ToDouble(data.Data.Data.ClosePrice);
+
+            if (data.Data.Data.Final)
+            {
+                var klineInsights = new BinanceKlineInsights(data.Data.Data);
+                tradingState.State[symbol].IntervalData[KlineInterval.OneDay].KlineInsights.Add(klineInsights);
+
+                klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[KlineInterval.OneDay].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                klineInsights.MAChange = (klineInsights.HighPrice - klineInsights.MA20) > 0
+                    ? new ChangeModel { Value = (klineInsights.HighPrice - klineInsights.MA20) / klineInsights.MA20, IsPositive = true }
+                    : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
+
+                tradingState.State[symbol].RefreshPriceBins();
+            }
+        }
+
+        private static async void HandleOneHourSymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
         {
             var symbol = data.Data.Symbol;
             var closePrice = Convert.ToDouble(data.Data.Data.ClosePrice);
@@ -397,9 +439,9 @@ namespace Telebot
             if (data.Data.Data.Final)
             {
                 var klineInsights = new BinanceKlineInsights(data.Data.Data);
-                tradingState.State[symbol].KlineInsights.Add(klineInsights);
+                tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Add(klineInsights);
 
-                klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
                 klineInsights.MAChange = (klineInsights.HighPrice - klineInsights.MA20) > 0
                     ? new ChangeModel { Value = (klineInsights.HighPrice - klineInsights.MA20) / klineInsights.MA20, IsPositive = true }
                     : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
@@ -407,7 +449,7 @@ namespace Telebot
                 tradingState.State[symbol].RefreshPriceBins();
             }
 
-            var lastInsightsRecord = tradingState.State[symbol].KlineInsights.Last();
+            var lastInsightsRecord = tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Last();
             var ma20 = lastInsightsRecord.MA20;
             lastInsightsRecord.MAChange = (closePrice - ma20) > 0
                 ? new ChangeModel { Value = (closePrice - ma20) / ma20, IsPositive = true }
@@ -415,7 +457,7 @@ namespace Telebot
 
             lastInsightsRecord.ClosePrice = closePrice;
 
-            if (tradingState.State[symbol].EnterSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
+            if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].EnterSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 try
                 {
@@ -432,7 +474,7 @@ namespace Telebot
                     await telebot.SendUpdate(ex.ToString());
                 }
             }
-            else if (tradingState.State[symbol].InformSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
+            else if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].InformSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 if ((DateTime.Now - tradingState.State[symbol].LastInformDate).TotalHours > 1)
                 {

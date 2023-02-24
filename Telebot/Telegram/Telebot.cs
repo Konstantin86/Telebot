@@ -15,7 +15,7 @@ namespace Telebot.Telegram
         public event Action<long>? StartHandler;
         public event Action<long>? StopHandler;
         public event Action<long>? SaveHandler;
-        public event Action<long, string?>? TopMovesHandler;
+        public event Action<long, string[]>? TopMovesHandler;
         public event Action<long, string[]>? VolumeProfileHandler;
         public event Action<long, string?>? SendFeedbackHandler;
         public event Action<long, string[]>? ConfigHandler;
@@ -106,7 +106,7 @@ namespace Telebot.Telegram
                 "/start" => Start(message.Chat.Id),
                 "/stop" => Stop(message.Chat.Id),
                 "/save" => SaveState(message.Chat.Id),
-                "/topmoves" => TopMoves(message.Chat.Id, parameter),
+                "/topmoves" => TopMoves(message.Chat.Id, parameters),
                 "/vp" => VolumeProfile(message.Chat.Id, parameters),
                 "/config" => Config(message.Chat.Id, parameters),
                 _ => Usage(message)
@@ -151,11 +151,11 @@ namespace Telebot.Telegram
                 }
             };
 
-            async Task TopMoves(long clientId, string symbol)
+            async Task TopMoves(long clientId, string[] parameters)
             {
                 if (TopMovesHandler != null)
                 {
-                    TopMovesHandler(clientId, symbol);
+                    TopMovesHandler(clientId, parameters);
                 }
             };
 

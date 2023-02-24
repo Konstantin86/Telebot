@@ -31,7 +31,7 @@ namespace Telebot.Binance
             this.tradingConfig = tradingConfig;
         }
 
-        public async Task OpenFuturesStream(Action<DataEvent<IBinanceStreamKlineData>> onKandleLineMessageCallback)
+        public async Task OpenFuturesStream(Action<DataEvent<IBinanceStreamKlineData>> onKandleLineMessageCallback, KlineInterval interval)
         {
             var pairs = new List<string>();
 
@@ -47,7 +47,7 @@ namespace Telebot.Binance
 
             try
             {
-                var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, KlineInterval.OneHour, onKandleLineMessageCallback);
+                var updateSubcription = await futuresSocketClient.UsdFuturesStreams.SubscribeToKlineUpdatesAsync(pairs, interval, onKandleLineMessageCallback);
             }
             catch (Exception)
             {

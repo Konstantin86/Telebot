@@ -3,7 +3,7 @@ using Newtonsoft.Json;
 
 namespace Telebot.Trading
 {
-    internal class BinanceKlineInsights
+    public class BinanceKlineInsights
     {
         public BinanceKlineInsights() {}
 
@@ -29,7 +29,7 @@ namespace Telebot.Trading
         public ChangeModel MAChange { get; set; }
     }
 
-    internal class ChangeModel
+    public class ChangeModel
     {
         public double Value { get; set; }
         public bool IsPositive { get; set; }

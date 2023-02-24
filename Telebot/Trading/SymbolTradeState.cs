@@ -1,17 +1,18 @@
-﻿using Newtonsoft.Json;
+﻿using Binance.Net.Enums;
+using Newtonsoft.Json;
 using Telebot.Utilities;
 
 namespace Telebot.Trading
 {
     internal class SymbolTradeState
     {
-        public List<BinanceKlineInsights> KlineInsights { get; set; } = new List<BinanceKlineInsights>();
+        public Dictionary<KlineInterval, IntervalData> IntervalData { get; set; } = new Dictionary<KlineInterval, IntervalData>();
         public DateTime LastOrderDate { get; set; } = DateTime.MinValue;
         public DateTime LastInformDate { get; set; } = DateTime.MinValue;
         public double BinSize { get; set; } = 200;
 
-        [JsonIgnore]
-        public IEnumerable<BinanceKlineInsights> KlineInsightsOrderedByPerformance => KlineInsights.Where(m => m.MAChange != null).OrderByDescending(m => m.MAChange.Abs);
+        //[JsonIgnore]
+        //public IEnumerable<BinanceKlineInsights> KlineInsightsOrderedByPerformance => KlineInsights.Where(m => m.MAChange != null).OrderByDescending(m => m.MAChange.Abs);
 
         // Fill out once at the application start after all symbols data loaded
         // Refresh after each candle closes (once per hour)
@@ -21,15 +22,11 @@ namespace Telebot.Trading
         public List<PriceBin> PriceBins { get; private set; }
         public bool IsMarkedOpen() => LastOrderDate > DateTime.MinValue;
         public void MarkClosed() => LastOrderDate = DateTime.MinValue;
-        public double GetProfitability(double topMovesPercent)
-        {
-            return (double)KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Where(m => m.CandlesTillStopLoss == null && m.CandlesTillProfit != null).Count() 
-                / KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Count();
-        }
+        
 
         public void RefreshPriceBins(int recentDays = 90)
         {
-            var klines = KlineInsights.TakeLast(recentDays * 24);
+            var klines = IntervalData[KlineInterval.OneHour].KlineInsights.TakeLast(recentDays * 24);
             var priceMin = klines.Select(k => k.LowPrice).Min();
             var priceMax = klines.Select(k => k.HighPrice).Max();
 
@@ -50,50 +47,6 @@ namespace Telebot.Trading
             {
                 priceBin.Significance = priceBin.Volume.PercentileOf(PriceBins.Select(m => m.Volume).ToArray());
             }
-        }
-
-        public double GetCurrentMaChangeHistoricalPercentage()
-        {
-            return KlineInsights.Last().MAChange.Abs.PercentileOf(KlineInsightsOrderedByPerformance.Select(m => m.MAChange.Abs).ToArray());
-        }
-
-        public List<BinanceKlineInsights> GetStopLossCases(double topMovesPercent)
-        {
-            return KlineInsightsOrderedByPerformance
-                .Take((int)(KlineInsights.Count * topMovesPercent))
-                .Where(m => m.CandlesTillStopLoss != null).ToList();
-        }
-
-        public double GetProfitAverageTimeInCandles(double topMovesPercent)
-        {
-            var list = KlineInsightsOrderedByPerformance
-                .Take((int)(KlineInsights.Count * topMovesPercent))
-                .Where(m => m.CandlesTillProfit.HasValue);
-
-            return list.Count() > 0 ? 
-                list.Average(m => m.CandlesTillProfit.GetValueOrDefault())
-                : 1;
-        }
-
-        public bool EnterSpikeDetected(ChangeModel maChange, double topMovesPercent)
-        {
-            if (KlineInsights.Count * topMovesPercent < 1)
-            {
-                return false;
-            }
-
-            return maChange.Abs >= KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Average(m => m.MAChange.Abs);
-        }
-
-
-        public bool InformSpikeDetected(ChangeModel maChange, double topMovesPercent)
-        {
-            if (KlineInsights.Count * topMovesPercent < 1)
-            {
-                return false;
-            }
-
-            return maChange.Abs >= KlineInsightsOrderedByPerformance.Take((int)(KlineInsights.Count * topMovesPercent)).Last().MAChange.Abs;
         }
     }
 }
