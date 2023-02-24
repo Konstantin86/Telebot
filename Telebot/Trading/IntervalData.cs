@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+﻿using Newtonsoft.Json;
 using Telebot.Utilities;
 
 namespace Telebot.Trading
@@ -19,6 +19,8 @@ namespace Telebot.Trading
 
         public double GetCurrentMaChangeHistoricalPercentage()
         {
+            if (KlineInsights.Last().MAChange == null) return 1;
+
             return KlineInsights.Last().MAChange.Abs.PercentileOf(KlineInsightsOrderedByPerformance.Select(m => m.MAChange.Abs).ToArray());
         }
 

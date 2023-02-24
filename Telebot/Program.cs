@@ -104,7 +104,7 @@ namespace Telebot
 
             int count = 1;
 
-            foreach (var symbol in symbols.Where(m => m.Value < DateTime.UtcNow.AddDays(-10)).Select(m => m.Key))
+            foreach (var symbol in symbols.Where(m => m.Value < DateTime.UtcNow.AddDays(-21)).Select(m => m.Key))
             {
                 Console.WriteLine($"{symbol}: Loading data ({count++} / {symbols.Count()})...");
 
@@ -116,7 +116,14 @@ namespace Telebot
                         tradingState.State[symbol] = new SymbolTradeState { IntervalData = new Dictionary<KlineInterval, IntervalData> { { interval, new IntervalData { KlineInsights = klineInsightsData } } } };
                     else
                     {
-                        tradingState.State[symbol].IntervalData[interval] = new IntervalData { KlineInsights = klineInsightsData };
+                        if (!tradingState.State[symbol].IntervalData.ContainsKey(interval))
+                        {
+                            tradingState.State[symbol].IntervalData[interval] = new IntervalData { KlineInsights = klineInsightsData };
+                        }
+                        else
+                        {
+                            //tradingState.State[symbol].IntervalData[interval].
+                        }
                     }
                 }
 
@@ -127,7 +134,9 @@ namespace Telebot
 
             tradingState.RefreshVolumeProfileData();
 
-            System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
+            //var json = JsonConvert.SerializeObject(tradingState, new JsonSerializerSettings { ContractResolver = new IgnoreJsonPropertyResolver() });
+
+            System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState, new JsonSerializerSettings { ContractResolver = new IgnoreJsonPropertyResolver() }));
         }
 
         private static void RunTelegramBot() 
@@ -227,12 +236,16 @@ namespace Telebot
 
         private static async void Telebot_TopMovesHandler(long chatId, string[] parameters)
         {
-            var symbol = parameters[0];
-            var interval = parameters.Length > 1 ? parameters[1] == "1d" ? KlineInterval.OneDay : KlineInterval.OneHour : KlineInterval.OneHour;
+            //if (parameters == null || parameters.Length == 0) return;
+            if (tradingState == null) return;
+
+            var interval = parameters == null || parameters.Length == 0 ? KlineInterval.OneHour : parameters[0] == "1d" ? KlineInterval.OneDay : KlineInterval.OneHour;
+            var symbol = (parameters == null || parameters.Length < 2) ? null : parameters[1];
 
             var topMovesMessages = tradingState.State
                             .Where(m => string.IsNullOrEmpty(symbol) ? true : m.Key == symbol)
                             .Select(m => new { m.Key, MaChangeHistoricalPercentage = m.Value.IntervalData[interval].GetCurrentMaChangeHistoricalPercentage(), m.Value.IntervalData[interval].KlineInsights.Last().ClosePrice, m.Value.IntervalData[interval].KlineInsights.Last().MAChange })
+                            .Where(m => m.MaChangeHistoricalPercentage < 1)
                             .OrderByDescending(m => m.MaChangeHistoricalPercentage)
                             .Take(20)
                             .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {(m.MAChange.IsPositive ? "+" : "-")}{m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "📈" : "📉")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
@@ -240,7 +253,7 @@ namespace Telebot
 
             string topMovesMessage = string.Join("\n", topMovesMessages.Select((str, i) => $"{i + 1}. {str}"));
 
-            await telebot.SendUpdate($"Current top 20 moves from MA20 on the 1h timeframe:\n{topMovesMessage}", chatId);
+            await telebot.SendUpdate($"Current top 20 moves from MA20 on the {(interval == KlineInterval.OneHour ? "1h" : "1d")} timeframe:\n{topMovesMessage}", chatId);
         }
 
         private static void Telebot_StartHandler(long chatId)
@@ -295,7 +308,7 @@ namespace Telebot
         {
             var marketData = new List<BinanceKlineInsights>();
 
-            bool dataPreloaded = tradingState.State.ContainsKey(symbol);
+            bool dataPreloaded = tradingState.State.ContainsKey(symbol) && tradingState.State[symbol].IntervalData.ContainsKey(interval);
 
             int candlesToLoad = 0;
 
@@ -316,7 +329,7 @@ namespace Telebot
                 int candlesCount = Math.Min(candlesToLoad, BinanceApiDataRecordsMaxCount);
 
                 var start = DateTime.UtcNow.RewindPeriodsBack(interval, Math.Min(candlesCount * loadingPagesCount, candlesToLoad));
-                var end = DateTime.UtcNow.RewindPeriodsBack(interval, Math.Min(candlesCount * loadingPagesCount, candlesToLoad)).AddHours(candlesCount);
+                var end = interval == KlineInterval.OneHour ? start.AddHours(candlesCount) : start.AddDays(candlesCount);
 
                 var result = await binanceClientService.GetMarketData(symbol, interval, start, end);
                 marketData.AddRange(result.Data.Where(m => m.CloseTime < DateTime.UtcNow).Select(m => new BinanceKlineInsights(m)));
@@ -406,62 +419,68 @@ namespace Telebot
 
         private static async void HandleOneDaySymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
         {
-            var symbol = data.Data.Symbol;
-            var closePrice = Convert.ToDouble(data.Data.Data.ClosePrice);
-
-            if (data.Data.Data.Final)
-            {
-                var klineInsights = new BinanceKlineInsights(data.Data.Data);
-                tradingState.State[symbol].IntervalData[KlineInterval.OneDay].KlineInsights.Add(klineInsights);
-
-                klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[KlineInterval.OneDay].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
-                klineInsights.MAChange = (klineInsights.HighPrice - klineInsights.MA20) > 0
-                    ? new ChangeModel { Value = (klineInsights.HighPrice - klineInsights.MA20) / klineInsights.MA20, IsPositive = true }
-                    : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
-
-                tradingState.State[symbol].RefreshPriceBins();
-            }
+            HandleKandleUpdate(data, KlineInterval.OneDay, false);
         }
 
         private static async void HandleOneHourSymbolUpdate(DataEvent<IBinanceStreamKlineData> data)
         {
-            var symbol = data.Data.Symbol;
-            var closePrice = Convert.ToDouble(data.Data.Data.ClosePrice);
+            HandleKandleUpdate(data, KlineInterval.OneHour);
+        }
 
-            if (!tradingState.State.ContainsKey(symbol))
+        private static async void HandleKandleUpdate(DataEvent<IBinanceStreamKlineData> data, KlineInterval interval, bool handleSignals = true)
+        {
+            var symbol = data.Data.Symbol;
+
+            if (!tradingState.State.ContainsKey(symbol)) return;
+
+            var klineData = data.Data.Data;
+            var closePrice = Convert.ToDouble(klineData.ClosePrice);
+            var lastKline = tradingState.State[symbol].IntervalData[interval].KlineInsights.Last();
+            bool canCalculateMA20 = tradingState.State[symbol].IntervalData[interval].KlineInsights.Count > 20;
+
+            if (lastKline.OpenTime < klineData.OpenTime)
             {
-                //telebot.SendUpdate($"New futures trading pair {symbol} detected. Please restart the bot to load insights for it in 5 days from now in order to trade this symbol");
-                return;    // New symbols needs app reloading to work properly, todo add some telegram / console message here...
+                var klineInsights = new BinanceKlineInsights(klineData);
+                tradingState.State[symbol].IntervalData[interval].KlineInsights.Add(klineInsights);
+
+                if (canCalculateMA20)
+                {
+                    klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[interval].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                }
+
+                lastKline = tradingState.State[symbol].IntervalData[interval].KlineInsights.Last();
             }
 
-            var symbolsToMonitor = new []{ "BTCUSDT" }.Union(tradingState.State.Where(m => m.Value.IsMarkedOpen()).Select(m => m.Key)).ToList();
+            lastKline.ClosePrice = closePrice;
 
-            if (data.Data.Data.Final)
+            if (klineData.Final)
             {
-                var klineInsights = new BinanceKlineInsights(data.Data.Data);
-                tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Add(klineInsights);
-
-                klineInsights.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
-                klineInsights.MAChange = (klineInsights.HighPrice - klineInsights.MA20) > 0
-                    ? new ChangeModel { Value = (klineInsights.HighPrice - klineInsights.MA20) / klineInsights.MA20, IsPositive = true }
-                    : new ChangeModel { Value = (klineInsights.MA20 - klineInsights.LowPrice) / klineInsights.LowPrice, IsPositive = false };
+                lastKline.Volume = klineData.Volume;
+                lastKline.LowPrice = Convert.ToDouble(klineData.LowPrice);
+                lastKline.HighPrice = Convert.ToDouble(klineData.HighPrice);
+                
+                if (canCalculateMA20)
+                {
+                    lastKline.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[interval].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                }
 
                 tradingState.State[symbol].RefreshPriceBins();
             }
 
-            var lastInsightsRecord = tradingState.State[symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Last();
-            var ma20 = lastInsightsRecord.MA20;
-            lastInsightsRecord.MAChange = (closePrice - ma20) > 0
-                ? new ChangeModel { Value = (closePrice - ma20) / ma20, IsPositive = true }
-                : new ChangeModel { Value = (ma20 - closePrice) / closePrice, IsPositive = false };
+            if (canCalculateMA20)
+            {
+                lastKline.MAChange = (closePrice - lastKline.MA20) > 0
+                    ? new ChangeModel { Value = (closePrice - lastKline.MA20) / lastKline.MA20, IsPositive = true }
+                    : new ChangeModel { Value = (lastKline.MA20 - closePrice) / closePrice, IsPositive = false };
+            }
 
-            lastInsightsRecord.ClosePrice = closePrice;
+            if (!handleSignals) return;
 
-            if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].EnterSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
+            if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].EnterSpikeDetected(lastKline.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 try
                 {
-                    var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, data.Data.Data.ClosePrice, lastInsightsRecord.MAChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
+                    var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, klineData.ClosePrice, lastKline.MAChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
 
                     if (placingOrderResult != null)
                     {
@@ -474,16 +493,16 @@ namespace Telebot
                     await telebot.SendUpdate(ex.ToString());
                 }
             }
-            else if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].InformSpikeDetected(lastInsightsRecord.MAChange, tradingConfig.SpikeDetectionTopPercentage))
+            else if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].InformSpikeDetected(lastKline.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 if ((DateTime.Now - tradingState.State[symbol].LastInformDate).TotalHours > 1)
                 {
                     tradingState.State[symbol].LastInformDate = DateTime.Now;
-                    await telebot.SendUpdate($"{symbol.ToChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastInsightsRecord.MAChange.Abs.ToString("P2")} {(lastInsightsRecord.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
+                    await telebot.SendUpdate($"{symbol.ToChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastKline.MAChange.Abs.ToString("P2")} {(lastKline.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
                 }
             }
 
-            // Check existing open positions without take profit and set take profits automatically (make it with a separate timer job, once a ten minutes)
+            var symbolsToMonitor = new[] { "BTCUSDT" }.Union(tradingState.State.Where(m => m.Value.IsMarkedOpen()).Select(m => m.Key)).ToList();
         }
     }
 }
