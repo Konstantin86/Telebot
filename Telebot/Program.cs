@@ -236,13 +236,13 @@ namespace Telebot
             {
                 await telebot.SendUpdate(sb.ToString(), clientId);
             }
-            // 1. get account open positions
-            // 2. for each open position
+            // [Done] 1. get account open positions
+            // [Done] 2. for each open position
             //   2.1 Assess it's semtiment based on trading view ideas
-            //   2.2 Propose where to set sl based on levels + sentiment
+            //   [Done] 2.2 Propose where to set sl based on levels + sentiment
             //   2.3 Propose where to set tp based on levels + sentiment
             //   2.4 Print other considerations including btc sentiment
-            //   2.5 Add inline keyboard commands to set sl / tp
+            //   2.5 Add inline keyboard commands to set sl / tp, check volume profile
         }
 
         private static async void Telebot_VolumeProfileHandler(long chatId, string[] parameters)
