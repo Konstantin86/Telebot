@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Diagnostics;
+using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
 using CryptoExchange.Net.CommonObjects;
@@ -55,7 +56,7 @@ namespace Telebot
 
         private static void RunBackgroundJobs()
         {
-            setTakeProfitsJob = new Timer(SetTakeProfitsJobHandler, null, TimeSpan.Zero, TimeSpan.FromMinutes(15));
+            setTakeProfitsJob = new Timer(SetTakeProfitsJobHandler, null, TimeSpan.Zero, TimeSpan.FromMinutes(10));
         }
 
         private static async void SetTakeProfitsJobHandler(object? state)
@@ -503,6 +504,40 @@ namespace Telebot
             }
 
             var symbolsToMonitor = new[] { "BTCUSDT" }.Union(tradingState.State.Where(m => m.Value.IsMarkedOpen()).Select(m => m.Key)).ToList();
+
+            if (symbolsToMonitor.Contains(symbol))
+            {
+                double levelThreshold = 0.015;  // 1.5%
+
+                var prevPrice = tradingState.State[symbol].IntervalData[interval].KlineInsights.SkipLast(1).Last().ClosePrice;
+
+                var strongestLevels = FindPeaks(tradingState.State[symbol].PriceBins)
+                                                 .Where(m => m.Significance > 0.75m)
+                                                 .OrderByDescending(m => m.Significance)
+                                                 .Select(m => m.Price)
+                                                 .ToList();
+
+                foreach (var level in strongestLevels)
+                {
+                    var isPrevPriceInRange = prevPrice.IsInRange(level - level * levelThreshold, level + level * levelThreshold);
+                    var isCurrentPriceInRange = closePrice.IsInRange(level - level * levelThreshold, level + level * levelThreshold);
+
+                    PriceLevelNotificationType? notificationType = (closePrice > prevPrice) && (!isPrevPriceInRange && isCurrentPriceInRange) ? PriceLevelNotificationType.PriceGoesUpToTheLevel
+                              : (closePrice > prevPrice) && (isPrevPriceInRange && !isCurrentPriceInRange) ? PriceLevelNotificationType.PriceBouncesUpFromTheLevel
+                              : (closePrice < prevPrice) && (!isPrevPriceInRange && isCurrentPriceInRange) ? PriceLevelNotificationType.PriceGoesDownToTheLevel
+                              : (closePrice < prevPrice) && (isPrevPriceInRange && !isCurrentPriceInRange) ? PriceLevelNotificationType.PriceBouncesDownFromTheLevel : null;
+
+                    if (!notificationType.HasValue) continue;
+
+                    var prevNotification = tradingState.State[symbol].PriceLevelNotification;
+
+                    if (prevNotification == null || (!(prevNotification.PriceLevel == level && prevNotification.NotificaitonType == notificationType.Value) && (DateTime.Now - prevNotification.LastNotifiedOn).TotalHours < 1))
+                    {
+                        tradingState.State[symbol].PriceLevelNotification = new PriceLevelNotification { PriceLevel = level, NotificaitonType = notificationType.Value, LastNotifiedOn = DateTime.Now };
+                        await telebot.SendUpdate($"[{symbol}]: {tradingState.State[symbol].PriceLevelNotification.ToString()}");
+                    }
+                }
+            }
         }
     }
 }

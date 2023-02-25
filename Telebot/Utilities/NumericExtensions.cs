@@ -9,6 +9,11 @@ namespace Telebot.Utilities
 {
     public static class NumericExtensions
     {
+        public static bool IsInRange(this double price, double min, double max)
+        {
+            return price >= min && price <= max;
+        }
+
         public static double GetThreeDigitsRounder(this double number)
         {
             return Convert.ToDouble(100 / Math.Pow(10, 5 - ((int)Math.Floor(Math.Log10(Math.Abs(number))) + 1)));

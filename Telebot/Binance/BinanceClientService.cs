@@ -173,7 +173,7 @@ namespace Telebot.Binance
 
                 var openPositions = accountInfo.Data.Positions.Where(m => m.UnrealizedPnl != 0);
 
-                MarkObsoletePositionsAsClosed(openPositions);
+                MarkObsoletePositionsAsClosedAndMarkLastOrderDateForOpenPositions(openPositions);
 
                 foreach (var openPosition in openPositions)
                 {
@@ -248,13 +248,25 @@ namespace Telebot.Binance
             return messages;
         }
 
-        private void MarkObsoletePositionsAsClosed(IEnumerable<BinancePositionInfoUsdt> openPositions)
+        private void MarkObsoletePositionsAsClosedAndMarkLastOrderDateForOpenPositions(IEnumerable<BinancePositionInfoUsdt> openPositions)
         {
             foreach (var tradingItem in tradingState.State)
             {
-                if (tradingItem.Value.IsMarkedOpen() && openPositions.FirstOrDefault(m => m.Symbol == tradingItem.Key) == null)
+                var openPosition = openPositions.FirstOrDefault(m => m.Symbol == tradingItem.Key);
+
+                if (tradingItem.Value.IsMarkedOpen())
                 {
-                    tradingItem.Value.MarkClosed();
+                    if (openPosition == null)
+                    {
+                        tradingItem.Value.MarkClosed();
+                    }
+                }
+                else
+                {
+                    if (openPosition != null)
+                    {
+                        tradingItem.Value.LastOrderDate = openPosition.UpdateTime.GetValueOrDefault();
+                    }
                 }
             }
         }

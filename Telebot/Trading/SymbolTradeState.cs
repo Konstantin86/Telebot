@@ -9,6 +9,7 @@ namespace Telebot.Trading
         public Dictionary<KlineInterval, IntervalData> IntervalData { get; set; } = new Dictionary<KlineInterval, IntervalData>();
         public DateTime LastOrderDate { get; set; } = DateTime.MinValue;
         public DateTime LastInformDate { get; set; } = DateTime.MinValue;
+        public PriceLevelNotification PriceLevelNotification { get; set; }
         public double BinSize { get; set; } = 200;
 
         //[JsonIgnore]
