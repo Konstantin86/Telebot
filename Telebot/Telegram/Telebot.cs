@@ -4,12 +4,15 @@ using Telegram.Bot.Polling;
 using Telegram.Bot.Types.Enums;
 using Telegram.Bot.Types;
 using System.Diagnostics;
+using Newtonsoft.Json;
+using Telebot.Trading;
 
 namespace Telebot.Telegram
 {
     internal class Telebot
     {
-        private TelegramBotClient bot;
+        private const string TelegramUserStoreFileReference = "userStore.json";
+        public TelegramBotClient bot;
         private ITelebotUsersStore usersStore;
 
         public event Action<long>? StartHandler;
@@ -23,8 +26,6 @@ namespace Telebot.Telegram
         public Telebot(string botAccessToken)
         {
             this.bot = new TelegramBotClient(botAccessToken);
-            this.usersStore = new TelebotUsersStore();
-
             var cts = new CancellationTokenSource();
 
             var receiverOptions = new ReceiverOptions() { AllowedUpdates = { } };
@@ -35,6 +36,23 @@ namespace Telebot.Telegram
             Console.WriteLine(
               $"Hello, World! I am user {me.Id} and my name is {me.FirstName}."
             );
+        }
+
+        private void SaveState()
+        {
+            System.IO.File.WriteAllText(TelegramUserStoreFileReference, JsonConvert.SerializeObject(this.usersStore));
+        }
+
+        public async Task InitState()
+        {
+            this.usersStore = System.IO.File.Exists(TelegramUserStoreFileReference)
+                ? JsonConvert.DeserializeObject<TelebotUsersStore>(System.IO.File.ReadAllText(TelegramUserStoreFileReference))
+                : new TelebotUsersStore();
+
+            foreach (var userId in this.usersStore.Users)
+            {
+                await this.bot.SendTextMessageAsync(userId, $"Welcome to telebot. Bot application is up and running ({(int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalHours} hours, {(DateTime.Now - Process.GetCurrentProcess().StartTime).Minutes} minutes). You're subscribed on updates.");
+            }
         }
 
         public async Task HandleErrorAsync(ITelegramBotClient botClient, Exception exception, CancellationToken cancellationToken)
@@ -84,7 +102,7 @@ namespace Telebot.Telegram
             }
             else
             {
-                this.usersStore.GetAllUsers().ForEach(async m => await this.bot.SendTextMessageAsync(m, message, ParseMode.Html, disableWebPagePreview: true));
+                this.usersStore.Users.ForEach(async m => await this.bot.SendTextMessageAsync(m, message, ParseMode.Html, disableWebPagePreview: true));
             }
         }
 
@@ -115,9 +133,14 @@ namespace Telebot.Telegram
 
             async Task Start(long clientId)
             {
-                this.usersStore.StoreUser(message.Chat.Id);
+                if (!this.usersStore.Users.Contains(clientId))
+                {
+                    this.usersStore.Users.Add(clientId);
+                }
 
-                await this.bot.SendTextMessageAsync(message.Chat.Id, $"Welcome to telebot. Bot application is up and running ({(int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalHours} hours, {(DateTime.Now - Process.GetCurrentProcess().StartTime).Minutes} minutes). You're subscribed on updates.");
+                this.SaveState();
+
+                await this.bot.SendTextMessageAsync(clientId, $"Welcome to telebot. Bot application is up and running ({(int)(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalHours} hours, {(DateTime.Now - Process.GetCurrentProcess().StartTime).Minutes} minutes). You're subscribed on updates.");
 
                 if (StartHandler != null)
                 {
@@ -127,7 +150,10 @@ namespace Telebot.Telegram
 
             async Task Stop(long clientId)
             {
-                this.usersStore.RemoveUser(message.Chat.Id);
+                if (this.usersStore.Users.Contains(clientId))
+                {
+                    this.usersStore.Users.Remove(clientId);
+                }
 
                 if (StopHandler != null)
                 {

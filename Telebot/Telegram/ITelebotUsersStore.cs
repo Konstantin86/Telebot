@@ -2,8 +2,6 @@
 {
     internal interface ITelebotUsersStore
     {
-        void StoreUser(long id);
-        List<long> GetAllUsers();
-        void RemoveUser(long id);
+        List<long> Users { get; set; }
     }
 }

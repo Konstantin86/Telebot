@@ -33,7 +33,7 @@ namespace Telebot
 
             InitTradingConfig();
 
-            RunTelegramBot();
+            await RunTelegramBot();
             InitBinanceClient();
 
             await LoadTradingInsights();
@@ -140,7 +140,7 @@ namespace Telebot
             System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState, new JsonSerializerSettings { ContractResolver = new IgnoreJsonPropertyResolver() }));
         }
 
-        private static void RunTelegramBot() 
+        private static async Task RunTelegramBot() 
         { 
             telebot = new Telegram.Telebot("6175182837:AAHPvR7-X9ldM7KGVN6l88z-G3k7wrFrhNs");
             telebot.SaveHandler += Telebot_SaveHandler;
@@ -148,6 +148,8 @@ namespace Telebot
             telebot.TopMovesHandler += Telebot_TopMovesHandler;
             telebot.ConfigHandler += Telebot_ConfigHandler;
             telebot.VolumeProfileHandler += Telebot_VolumeProfileHandler;
+            
+            await telebot.InitState();
         }
 
         private static async void Telebot_VolumeProfileHandler(long chatId, string[] parameters)
@@ -290,6 +292,16 @@ namespace Telebot
             {
                 telebot?.SendUpdate(sb.ToString(), chatId);
             }
+
+            var priceLevelNotifications = tradingState.State.Where(m => m.Value.PriceLevelNotification != null);
+
+            if (priceLevelNotifications.Count() > 0)
+            {
+                sb = new StringBuilder();
+                sb.AppendLine($"Recent price level notifications:");
+                sb.AppendLine(string.Join("\n", priceLevelNotifications.Select(m => $"[{m.Key}]: {m.Value.PriceLevelNotification}")));
+                telebot?.SendUpdate(sb.ToString(), chatId);
+            }
         }
 
         private static void Telebot_SaveHandler(long chatId)
@@ -352,10 +364,13 @@ namespace Telebot
                     {
                         tradingState.State[symbol].IntervalData[interval].KlineInsights.Add(kline);
 
-                        kline.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[interval].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
-                        kline.MAChange = (kline.HighPrice - kline.MA20) > 0
-                            ? new ChangeModel { Value = (kline.HighPrice - kline.MA20) / kline.MA20, IsPositive = true }
-                            : new ChangeModel { Value = (kline.MA20 - kline.LowPrice) / kline.LowPrice, IsPositive = false };
+                        if (tradingState.State[symbol].IntervalData[interval].KlineInsights.Count > 20)
+                        {
+                            kline.MA20 = taLibManager.Ma(tradingState.State[symbol].IntervalData[interval].KlineInsights.Select(m => m.ClosePrice), TALib.Core.MAType.Sma, 20).Current;
+                            kline.MAChange = (kline.HighPrice - kline.MA20) > 0
+                                ? new ChangeModel { Value = (kline.HighPrice - kline.MA20) / kline.MA20, IsPositive = true }
+                                : new ChangeModel { Value = (kline.MA20 - kline.LowPrice) / kline.LowPrice, IsPositive = false };
+                        }
                     }
                     else
                     {
@@ -507,7 +522,7 @@ namespace Telebot
 
             if (symbolsToMonitor.Contains(symbol))
             {
-                double levelThreshold = 0.015;  // 1.5%
+                double levelThreshold = 0.01;  // 1.5%
 
                 var prevPrice = tradingState.State[symbol].IntervalData[interval].KlineInsights.SkipLast(1).Last().ClosePrice;
 
