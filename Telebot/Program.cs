@@ -247,42 +247,49 @@ namespace Telebot
 
         private static async void Telebot_VolumeProfileHandler(long chatId, string[] parameters)
         {
-            if (parameters == null || parameters.Length == 0) return;
-
-            var symbol = parameters[0];
-
-            if (symbol == null) return;
-
-            tradingState.State[symbol.ToSymbol()].RefreshPriceBins(parameters.Length > 1 ? int.Parse(parameters[1]) : 90);
-            var bins = tradingState.State[symbol.ToSymbol()].PriceBins;
-
-            var sb = new StringBuilder();
-
-            var strongestLevels = FindPeaks(bins)
-                                    .Where(m => m.Significance > 0.75m)
-                                    .OrderByDescending(m => m.Significance)
-                                    .Select(m => m.Price)
-                                    .ToList();
-
-            double currentPrice = tradingState.State[symbol.ToSymbol()].IntervalData[KlineInterval.OneHour].KlineInsights.Last().ClosePrice;
-            var closestPriceBin = currentPrice.FindClosestValue(bins.Select(m => m.Price).ToList());
-            var rounder = bins.Last().Price.GetThreeDigitsRounder();
-
-            foreach (var bin in bins.OrderByDescending(b => b.Price))
+            try
             {
-                bool isMajorLevel = strongestLevels.Contains(bin.Price);
-                bool isClosesPriceBin = bin.Price == closestPriceBin;
-                
-                double roundedPrice = (Math.Round(((bin.Price + (bin.Price + tradingState.State[symbol.ToSymbol()].BinSize)) / 2) / rounder) * rounder);
+                if (parameters == null || parameters.Length == 0) return;
 
-                var vpInfoLine = $"${roundedPrice.ToString("G5")}: " +
-                    //$"({bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()).ToString("P0")})" +
-                    $"{new string('-', Convert.ToInt32(Math.Ceiling((bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()) * 100) / 5)))}";
+                var symbol = parameters[0];
 
-                sb.AppendLine($"{(isMajorLevel ? $"<b>{vpInfoLine}> ({strongestLevels.IndexOf(bin.Price) + 1})</b>" : vpInfoLine)}{(isClosesPriceBin ? $" >> ${currentPrice.ToString("G5")}" : "")}");
+                if (symbol == null) return;
+
+                tradingState.State[symbol.ToSymbol()].RefreshPriceBins(parameters.Length > 1 ? int.Parse(parameters[1]) : 90);
+                var bins = tradingState.State[symbol.ToSymbol()].PriceBins;
+
+                var sb = new StringBuilder();
+
+                var strongestLevels = FindPeaks(bins)
+                                        .Where(m => m.Significance > 0.75m)
+                                        .OrderByDescending(m => m.Significance)
+                                        .Select(m => m.Price)
+                                        .ToList();
+
+                double currentPrice = tradingState.State[symbol.ToSymbol()].IntervalData[KlineInterval.OneHour].KlineInsights.Last().ClosePrice;
+                var closestPriceBin = currentPrice.FindClosestValue(bins.Select(m => m.Price).ToList());
+                var rounder = bins.Last().Price.GetThreeDigitsRounder();
+
+                foreach (var bin in bins.OrderByDescending(b => b.Price))
+                {
+                    bool isMajorLevel = strongestLevels.Contains(bin.Price);
+                    bool isClosesPriceBin = bin.Price == closestPriceBin;
+
+                    double roundedPrice = (Math.Round(((bin.Price + (bin.Price + tradingState.State[symbol.ToSymbol()].BinSize)) / 2) / rounder) * rounder);
+
+                    var vpInfoLine = $"${roundedPrice.ToString("G5")}: " +
+                        //$"({bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()).ToString("P0")})" +
+                        $"{new string('-', Convert.ToInt32(Math.Ceiling((bin.Volume.PercentileOf(bins.Select(m => m.Volume).ToArray()) * 100) / 5)))}";
+
+                    sb.AppendLine($"{(isMajorLevel ? $"<b>{vpInfoLine}> ({strongestLevels.IndexOf(bin.Price) + 1})</b>" : vpInfoLine)}{(isClosesPriceBin ? $" >> ${currentPrice.ToString("G5")}" : "")}");
+                }
+
+                await telebot.SendUpdate(sb.ToString(), chatId);
             }
-
-            await telebot.SendUpdate(sb.ToString(), chatId);
+            catch(Exception ex)
+            {
+                await telebot.SendUpdate(ex.ToString(), chatId);
+            }
         }
 
         public static List<PriceBin> FindPeaks(List<PriceBin> values)
