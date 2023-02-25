@@ -6,6 +6,7 @@ using Binance.Net.Objects.Models.Futures;
 using CryptoExchange.Net.CommonObjects;
 using CryptoExchange.Net.Objects;
 using CryptoExchange.Net.Sockets;
+using System.Collections.Generic;
 using System.Drawing;
 using Telebot.Trading;
 using Telebot.Utilities;
@@ -268,6 +269,27 @@ namespace Telebot.Binance
                         tradingItem.Value.LastOrderDate = openPosition.UpdateTime.GetValueOrDefault();
                     }
                 }
+            }
+        }
+
+        public async Task<IEnumerable<BinancePositionInfoWithMarketData>> GetOpenPositions()
+        {
+            var result = new List<BinancePositionInfoWithMarketData>();
+
+            using (var client = new BinanceClient(new BinanceClientOptions { ApiCredentials = new BinanceApiCredentials(this.apiKey, this.apiSecret) }))
+            {
+                var accountInfo = await client.UsdFuturesApi.Account.GetAccountInfoAsync();
+                var ordersResponse = await client.UsdFuturesApi.Trading.GetOpenOrdersAsync();
+
+                foreach (var openPositionInfo in accountInfo.Data.Positions
+                    .Where(m => m.UnrealizedPnl != 0)
+                    .Where(m => m.Symbol.EndsWith("USDT")))
+                {
+                    var bookPrice = await client.UsdFuturesApi.ExchangeData.GetBookPriceAsync(openPositionInfo.Symbol);
+                    result.Add(new BinancePositionInfoWithMarketData(openPositionInfo, bookPrice, ordersResponse.Data.Where(m => m.Symbol == openPositionInfo.Symbol)));
+                }
+
+                return result;
             }
         }
     }

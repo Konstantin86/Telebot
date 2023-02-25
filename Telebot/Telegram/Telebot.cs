@@ -18,6 +18,7 @@ namespace Telebot.Telegram
         public event Action<long>? StartHandler;
         public event Action<long>? StopHandler;
         public event Action<long>? SaveHandler;
+        public event Action<long>? InsightsHandler;
         public event Action<long, string[]>? TopMovesHandler;
         public event Action<long, string[]>? VolumeProfileHandler;
         public event Action<long, string?>? SendFeedbackHandler;
@@ -126,6 +127,7 @@ namespace Telebot.Telegram
                 "/save" => SaveState(message.Chat.Id),
                 "/topmoves" => TopMoves(message.Chat.Id, parameters),
                 "/vp" => VolumeProfile(message.Chat.Id, parameters),
+                "/insights" => Insights(message.Chat.Id),
                 "/config" => Config(message.Chat.Id, parameters),
                 _ => Usage(message)
             };
@@ -158,6 +160,14 @@ namespace Telebot.Telegram
                 if (StopHandler != null)
                 {
                     StopHandler(clientId);
+                }
+            };
+            
+            async Task Insights(long chatId)
+            {
+                if (InsightsHandler != null)
+                {
+                    InsightsHandler(chatId);
                 }
             };
 

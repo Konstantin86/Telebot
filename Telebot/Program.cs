@@ -144,12 +144,105 @@ namespace Telebot
         { 
             telebot = new Telegram.Telebot("6175182837:AAHPvR7-X9ldM7KGVN6l88z-G3k7wrFrhNs");
             telebot.SaveHandler += Telebot_SaveHandler;
+            telebot.InsightsHandler += Telebot_InsightsHandler;
             telebot.StartHandler += Telebot_StartHandler;
             telebot.TopMovesHandler += Telebot_TopMovesHandler;
             telebot.ConfigHandler += Telebot_ConfigHandler;
             telebot.VolumeProfileHandler += Telebot_VolumeProfileHandler;
             
             await telebot.InitState();
+        }
+
+        private static async void Telebot_InsightsHandler(long clientId)
+        {
+            var openPositions = await binanceClientService.GetOpenPositions();
+
+            var sb = new StringBuilder();
+
+            foreach (var openPosition in openPositions)
+            {
+                sb.AppendLine($"<b>[{openPosition.PositionInfo.Symbol}]: </b>");
+
+                var side = PositionSide.Both;
+
+                if (openPosition.PositionInfo.EntryPrice < openPosition.BookPrice.Data.BestBidPrice && openPosition.PositionInfo.EntryPrice < openPosition.BookPrice.Data.BestAskPrice)
+                {
+                    if (openPosition.PositionInfo.UnrealizedPnl < 0)
+                    {
+                        side = PositionSide.Short;
+                    }
+                    else if (openPosition.PositionInfo.UnrealizedPnl > 0)
+                    {
+                        side = PositionSide.Long;
+                    }
+                }
+                else if (openPosition.PositionInfo.EntryPrice > openPosition.BookPrice.Data.BestBidPrice && openPosition.PositionInfo.EntryPrice > openPosition.BookPrice.Data.BestAskPrice)
+                {
+                    if (openPosition.PositionInfo.UnrealizedPnl < 0)
+                    {
+                        side = PositionSide.Long;
+                    }
+                    else if (openPosition.PositionInfo.UnrealizedPnl > 0)
+                    {
+                        side = PositionSide.Short;
+                    }
+                }
+
+                if (side == PositionSide.Both)
+                {
+                    // SL / TP suggestions can't be done as symbol is traded close to entry price and it's not possible to define position side
+                }
+                else
+                {
+                    var bins = tradingState.State[openPosition.PositionInfo.Symbol].PriceBins;
+
+                    double currentPrice = tradingState.State[openPosition.PositionInfo.Symbol].IntervalData[KlineInterval.OneHour].KlineInsights.Last().ClosePrice;
+
+                    var strongestLevels = FindPeaks(bins)
+                                            .Where(m => m.Significance > 0.75m)
+                                            .OrderBy(m => Math.Abs(currentPrice - m.Price))
+                                            .Select(m => m.Price)
+                                            .ToList();
+
+                    var upperLevel = strongestLevels.FirstOrDefault(m => m > currentPrice);
+                    var lowerLevel = strongestLevels.FirstOrDefault(m => m < currentPrice);
+
+                    if (side == PositionSide.Long)
+                    {
+                        if (lowerLevel == default(double))
+                        {
+                            sb.AppendLine($"\tWarning! There is no significant level of support detected.{(openPosition.StopLossOrder == null ? " Consider to set stop loss as price may drop significantly!" : "")}");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"\tClosest level of support is at the price {lowerLevel.ToString("G5")}$. Recommended stop loss level is at {(lowerLevel - lowerLevel * 0.01).ToString("G5")}$ {(openPosition.StopLossOrder == null ? $" Consider to set a stop loss" : $"{(Convert.ToDouble(openPosition.StopLossOrder.StopPrice) < (lowerLevel - lowerLevel * 0.01) ? $"Your stop loss {openPosition.StopLossOrder.StopPrice.GetValueOrDefault().ToString("G5")}$ is set too far." : "")}")}");
+                        }
+                    }
+                    else
+                    {
+                        if (upperLevel == default(double))
+                        {
+                            sb.AppendLine($"\tWarning! There is no significant level of resistance detected.{(openPosition.StopLossOrder == null ? " Consider to set stop loss as price may spike significantly!" : "")}");
+                        }
+                        else
+                        {
+                            sb.AppendLine($"\tClosest level of resistance is at the price {upperLevel.ToString("G5")}$. Recommended stop loss level is at {(upperLevel + upperLevel * 0.01).ToString("G5")}$ {(openPosition.StopLossOrder == null ? $" Consider to set a stop loss" : $"{(Convert.ToDouble(openPosition.StopLossOrder.StopPrice) > (upperLevel + upperLevel * 0.01) ? $"Your stop loss {openPosition.StopLossOrder.StopPrice.GetValueOrDefault().ToString("G5")}$ is set too far." : "")}")}");
+                        }
+                    }
+                }
+            }
+
+            if (sb.Length > 0)
+            {
+                await telebot.SendUpdate(sb.ToString(), clientId);
+            }
+            // 1. get account open positions
+            // 2. for each open position
+            //   2.1 Assess it's semtiment based on trading view ideas
+            //   2.2 Propose where to set sl based on levels + sentiment
+            //   2.3 Propose where to set tp based on levels + sentiment
+            //   2.4 Print other considerations including btc sentiment
+            //   2.5 Add inline keyboard commands to set sl / tp
         }
 
         private static async void Telebot_VolumeProfileHandler(long chatId, string[] parameters)
@@ -546,7 +639,7 @@ namespace Telebot
 
                     var prevNotification = tradingState.State[symbol].PriceLevelNotification;
 
-                    if (prevNotification == null || (!(prevNotification.PriceLevel == level && prevNotification.NotificaitonType == notificationType.Value) && (DateTime.Now - prevNotification.LastNotifiedOn).TotalHours < 1))
+                    if (prevNotification == null || (!(prevNotification.PriceLevel == level && prevNotification.NotificaitonType == notificationType.Value) && (DateTime.Now - prevNotification.LastNotifiedOn).TotalHours > 1))
                     {
                         tradingState.State[symbol].PriceLevelNotification = new PriceLevelNotification { PriceLevel = level, NotificaitonType = notificationType.Value, LastNotifiedOn = DateTime.Now };
                         await telebot.SendUpdate($"[{symbol}]: {tradingState.State[symbol].PriceLevelNotification.ToString()}");
