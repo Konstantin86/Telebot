@@ -24,6 +24,8 @@ namespace Telebot.Telegram
         public event Action<long, string?>? SendFeedbackHandler;
         public event Action<long, string[]>? ConfigHandler;
 
+        public event Action<long, string> GetIdeaLinkHandler;
+
         public Telebot(string botAccessToken)
         {
             this.bot = new TelegramBotClient(botAccessToken);
@@ -129,6 +131,7 @@ namespace Telebot.Telegram
                 "/vp" => VolumeProfile(message.Chat.Id, parameters),
                 "/insights" => Insights(message.Chat.Id),
                 "/config" => Config(message.Chat.Id, parameters),
+                "/idea" => GetIdeaLink(message.Chat.Id, parameter),
                 _ => Usage(message)
             };
             await action;
@@ -200,6 +203,14 @@ namespace Telebot.Telegram
                 if (ConfigHandler != null)
                 {
                     ConfigHandler(clientId, parameters);
+                }
+            };
+
+            async Task GetIdeaLink(long chatId, string coin)
+            {
+                if (GetIdeaLinkHandler != null)
+                {
+                    GetIdeaLinkHandler(chatId, coin);
                 }
             };
 

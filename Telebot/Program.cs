@@ -1,13 +1,13 @@
-﻿using System.Diagnostics;
-using System.Text;
+﻿using System.Text;
 using Binance.Net.Enums;
 using Binance.Net.Interfaces;
-using CryptoExchange.Net.CommonObjects;
 using CryptoExchange.Net.Sockets;
 using Newtonsoft.Json;
 using Telebot.Binance;
+using Telebot.Indicators;
 using Telebot.Trading;
 using Telebot.Trading.TA;
+using Telebot.TradingView;
 using Telebot.Utilities;
 
 namespace Telebot
@@ -23,6 +23,12 @@ namespace Telebot
         const string TradingStateFileReference = "tradingState.json";
         const string TradingConfigFileReference = "tradingConfig.json";
         const int BinanceApiDataRecordsMaxCount = 500;
+
+        private static Dictionary<string, object> _symbolLocks = new Dictionary<string, object>();
+
+        private static TradingViewClient tradingViewClient = new TradingViewClient();
+
+        private static IdeasSentimentIndicator ideasSentimentIndicator;
 
         static Timer setTakeProfitsJob = null;
 
@@ -40,6 +46,7 @@ namespace Telebot
             InitBinanceClient();
             await RunTradingBot();
 
+            InitFundamentalIndicators();
             RunBackgroundJobs();
 
             Console.ReadLine();
@@ -47,6 +54,12 @@ namespace Telebot
             System.IO.File.WriteAllText(TradingStateFileReference, JsonConvert.SerializeObject(tradingState));
             System.IO.File.WriteAllText(TradingConfigFileReference, JsonConvert.SerializeObject(tradingConfig));
             // todo add timer job to close orphant TP / SL orders once a minutes
+        }
+
+        private static void InitFundamentalIndicators()
+        {
+            ideasSentimentIndicator = new IdeasSentimentIndicator(tradingViewClient, tradingState.State.Keys.Select(m => m.ToAsset()));
+            ideasSentimentIndicator.SubscribeOnUpdates();
         }
 
         private static void InitTradingConfig()
@@ -149,8 +162,23 @@ namespace Telebot
             telebot.TopMovesHandler += Telebot_TopMovesHandler;
             telebot.ConfigHandler += Telebot_ConfigHandler;
             telebot.VolumeProfileHandler += Telebot_VolumeProfileHandler;
+            telebot.GetIdeaLinkHandler += Telebot_GetIdeaLinkHandler;
             
             await telebot.InitState();
+        }
+
+        private static async void Telebot_GetIdeaLinkHandler(long clientId, string asset)
+        {
+            var ideaSentiment = tradingViewClient.GetIdeaSentiment(asset);
+
+            var ideaInfo = string.Join("\n",
+                    $"Freshness: {ideaSentiment.GetFreshness().ToString("N1")} days",
+                    $"Relative Strength: {ideasSentimentIndicator.GetRelativeSentimentStrength(asset).ToString("P0")}"
+                );
+
+            //var assetMarketData = fundamentalsIndicator.AssetMarketDataMap[asset.ToUpper()];
+
+            await telebot.SendUpdate($"{ideaSentiment.ToString("long")}" + $"\n{ideaInfo}", clientId);
         }
 
         private static async void Telebot_InsightsHandler(long clientId)
@@ -351,7 +379,7 @@ namespace Telebot
                             .Where(m => m.MaChangeHistoricalPercentage < 1)
                             .OrderByDescending(m => m.MaChangeHistoricalPercentage)
                             .Take(20)
-                            .Select(m => $"{m.Key.ToChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {(m.MAChange.IsPositive ? "+" : "-")}{m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "📈" : "📉")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
+                            .Select(m => $"{m.Key.ToBinanceChartHyperLink()} ({m.ClosePrice.ToString("C4")}): {(m.MAChange.IsPositive ? "+" : "-")}{m.MAChange.Abs.ToString("P1")} {(m.MAChange.IsPositive ? "📈" : "📉")} (top {(1 - m.MaChangeHistoricalPercentage).ToString("P2")})")
                             .ToList();
 
             string topMovesMessage = string.Join("\n", topMovesMessages.Select((str, i) => $"{i + 1}. {str}"));
@@ -374,7 +402,7 @@ namespace Telebot
 
                 foreach (var informationSingal in informationalSignalsForRecent24h)
                 {
-                    sb.AppendLine($"{informationSingal.Key.ToChartHyperLink()}: {informationSingal.Value.LastInformDate.ToString("g")}");
+                    sb.AppendLine($"{informationSingal.Key.ToBinanceChartHyperLink()}: {informationSingal.Value.LastInformDate.ToString("g")}");
                 }
             }
 
@@ -594,13 +622,27 @@ namespace Telebot
 
             if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].EnterSpikeDetected(lastKline.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
+                if (!_symbolLocks.ContainsKey(symbol))
+                {
+                    _symbolLocks[symbol] = new object();
+                }
+
+                // Acquire a lock on the symbol lock object
+                bool lockTaken = false;
+                object symbolLock = _symbolLocks[symbol];
+
                 try
                 {
-                    var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, klineData.ClosePrice, lastKline.MAChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
+                    Monitor.TryEnter(symbolLock, TimeSpan.Zero, ref lockTaken);
 
-                    if (placingOrderResult != null)
+                    if (lockTaken)
                     {
-                        await telebot.SendUpdate(placingOrderResult);
+                        var placingOrderResult = await binanceClientService.PlaceOrder(data.Data.Symbol, klineData.ClosePrice, lastKline.MAChange.IsPositive ? OrderSide.Sell : OrderSide.Buy);
+
+                        if (placingOrderResult != null)
+                        {
+                            await telebot.SendUpdate(placingOrderResult);
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -608,13 +650,20 @@ namespace Telebot
                     Console.WriteLine(ex.ToString());
                     await telebot.SendUpdate(ex.ToString());
                 }
+                finally
+                {
+                    if (lockTaken)
+                    {
+                        Monitor.Exit(symbolLock);
+                    }
+                }
             }
             else if (tradingState.State[symbol].IntervalData[KlineInterval.OneHour].InformSpikeDetected(lastKline.MAChange, tradingConfig.SpikeDetectionTopPercentage))
             {
                 if ((DateTime.Now - tradingState.State[symbol].LastInformDate).TotalHours > 1)
                 {
                     tradingState.State[symbol].LastInformDate = DateTime.Now;
-                    await telebot.SendUpdate($"{symbol.ToChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastKline.MAChange.Abs.ToString("P2")} {(lastKline.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
+                    await telebot.SendUpdate($"{symbol.ToBinanceChartHyperLink()}: Price is {closePrice.ToString("C4")} which is {lastKline.MAChange.Abs.ToString("P2")} {(lastKline.MAChange.IsPositive ? "growth 📈" : "drop 📉")} from MA20 which is in historical top 1% range. Monitor for entry area here...");
                 }
             }
 

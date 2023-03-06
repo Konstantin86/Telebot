@@ -160,16 +160,19 @@ namespace Telebot.Binance
                 if (!accountInfo.Success)
                 {
                     messages.Add($"GetAccountInfoAsync() calling error: {accountInfo.Error?.Message}");
+                    return messages;
                 }
 
                 if (!ordersResponse.Success)
                 {
                     messages.Add($"GetOpenOrdersAsync() calling error: {ordersResponse.Error?.Message}");
+                    return messages;
                 }
 
                 if (!tradeSymbolsInfo.Success)
                 {
                     messages.Add($"GetExchangeInfoAsync() calling error: {tradeSymbolsInfo.Error?.Message}");
+                    return messages;
                 }
 
                 var openPositions = accountInfo.Data.Positions.Where(m => m.UnrealizedPnl != 0);

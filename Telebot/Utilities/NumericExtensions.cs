@@ -77,6 +77,15 @@ namespace Telebot.Utilities
             }
         }
 
+        public static decimal PercentileOf(this int number, List<int> range)
+        {
+            range.Sort();
+            var distinctRange = range.Distinct().ToList();
+            int index = distinctRange.IndexOf(number);
+            if (index == 0) index = 1;
+            return index / (decimal)distinctRange.Count;
+        }
+
         public static double FindClosestValue(this double value, List<double> collection)
         {
             collection.Sort();  // Sort the list of values

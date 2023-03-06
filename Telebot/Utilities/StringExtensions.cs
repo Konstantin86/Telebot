@@ -23,9 +23,14 @@ namespace Telebot.Utilities
             return $"https://www.binance.com/en/futures/{symbol}";
         }
 
-        public static string ToChartHyperLink(this string symbol)
+        public static string ToBinanceChartHyperLink(this string symbol)
         {
             return $"<a href =\"{symbol.ToBinanceSymbolChartLink()}\">{symbol}</a>";
+        }
+
+        public static string ToTradingViewAssetChartLink(this string asset, int intervalMins)
+        {
+            return $"https://www.tradingview.com/chart/?symbol=BINANCE:{asset}USDT&interval={intervalMins}";
         }
     }
 }
